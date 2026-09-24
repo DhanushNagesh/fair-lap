@@ -109,6 +109,8 @@ make something pass.
   name the input or state that breaks it.
 - Flag whether a design choice is resume-defensible (I could explain it in an
   interview) or cargo-culted. If cargo-culted, say the simpler alternative.
+- Commit after each logical unit — one thing working end to end, scoped message,
+  no generated-by footer. This is standing authorization; don't ask each time.
 - Phases land one at a time, in order. Don't jump ahead unless I ask. Phase 0's
   coverage number gates whether Phase 4 is even worth doing.
 - Report a negative result as a result. If the market wins, the project's
