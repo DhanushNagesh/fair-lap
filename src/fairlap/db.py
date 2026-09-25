@@ -46,9 +46,11 @@ _RAW_DDL: dict[str, str] = {
         gmt_offset          VARCHAR,
         year                INTEGER,
         country_name        VARCHAR,
+        country_code        VARCHAR,
         circuit_key         BIGINT,
         circuit_short_name  VARCHAR,
-        location            VARCHAR
+        location            VARCHAR,
+        is_cancelled        BOOLEAN
     """,
     "raw_laps": """
         session_key         BIGINT,
@@ -146,6 +148,8 @@ _RAW_DDL: dict[str, str] = {
         driver_number       INTEGER,
         session_key         BIGINT,
         event_date          DATE,
+        event_date_source   VARCHAR,
+        match_note          VARCHAR,
         volume_usd          DOUBLE,
         closed              BOOLEAN,
         outcome_yes         BOOLEAN
