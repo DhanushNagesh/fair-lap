@@ -51,15 +51,9 @@ from fairlap.config import (
     TOP_N_DRIVERS,
 )
 from fairlap.ingest import polymarket
+from fairlap.ingest.openf1 import race_window
 
-
-def race_window(session: pd.Series) -> tuple[int, int]:
-    """(start_ts, end_ts) unix seconds for a race, from OpenF1 session bounds."""
-    start = pd.Timestamp(session["date_start"]).tz_convert("UTC")
-    end = pd.Timestamp(session["date_end"]).tz_convert("UTC")
-    if pd.isna(start) or pd.isna(end) or end <= start:
-        raise ValueError(f"session {session.get('session_key')} has no usable window")
-    return int(start.timestamp()), int(end.timestamp())
+__all__ = ["race_window"]
 
 
 def _epoch_minutes(ts: pd.Series) -> np.ndarray:

@@ -36,6 +36,7 @@ from fairlap.config import (
     POLYMARKET_MAX_REQ_PER_SEC,
     TRADES_PAGE_SIZE,
 )
+from fairlap.ingest import openf1
 from fairlap.ingest.http import RateLimiter, get_json
 
 SOURCE = "polymarket"
@@ -116,6 +117,18 @@ _CIRCUIT_ALIASES: dict[str, tuple[str, ...]] = {
 TRADE_COLUMNS = (
     "transaction_hash",
     "token_id",
+    "ts",
+    "price",
+    "size",
+    "side",
+    "outcome",
+)
+
+# What raw_market_trades stores: the fill keeps the market's Yes token, and
+# `outcome` says which side it was, so a No fill is still recoverable as 1 - p.
+TRADE_TABLE_COLUMNS = (
+    "transaction_hash",
+    "yes_token_id",
     "ts",
     "price",
     "size",
@@ -411,8 +424,6 @@ def match_report(events: pd.DataFrame) -> pd.DataFrame:
 
 def build_event_spine(seasons: Iterable[int], refresh: bool = False) -> pd.DataFrame:
     """Race-winner markets for the given seasons, each carrying its session_key."""
-    from fairlap.ingest import openf1
-
     sessions = openf1.fetch_sessions(seasons, refresh=refresh)
     events = fetch_f1_events(seasons, refresh=refresh)
     return match_events_to_sessions(events, sessions)
@@ -575,9 +586,104 @@ def prices_from_trades(trades: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def ingest(seasons: Iterable[int], min_volume_usd: float | None = None) -> dict[str, int]:
-    """Load market metadata, prices and trades for markets above the volume floor."""
-    raise NotImplementedError
+def _matched_markets(seasons: Iterable[int]) -> pd.DataFrame:
+    """Every market that carries a session_key, with that race's time bounds."""
+    con = db.connect(read_only=True)
+    try:
+        return con.execute(
+            """
+            SELECT m.condition_id, m.yes_token_id, m.driver_name, m.volume_usd,
+                   m.session_key, s.year, s.circuit_short_name, s.date_start, s.date_end
+            FROM raw_market_meta m
+            JOIN raw_sessions s USING (session_key)
+            WHERE s.year IN (SELECT UNNEST($1::INTEGER[]))
+              AND s.date_start IS NOT NULL AND s.date_end IS NOT NULL
+            ORDER BY s.date_start, m.volume_usd DESC
+            """,
+            [list(seasons)],
+        ).fetchdf()
+    finally:
+        con.close()
+
+
+def price_series(
+    yes_token_id: str,
+    condition_id: str,
+    start_ts: int,
+    end_ts: int,
+    refresh: bool = False,
+    client: httpx.Client | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(prices, trades) for one market over one race window.
+
+    Both price series are kept, tagged in `source`, rather than one being
+    chosen here: `history` is the CLOB resampled to a point a minute whether or
+    not anyone traded, `trades` is a print somebody actually filled. Which of
+    the two a comparison may use is a `transform`/`eval` decision, and Phase 0
+    showed they disagree by a lot.
+    """
+    trades = fetch_trades(condition_id, start_ts, end_ts, refresh=refresh, client=client)
+    history = fetch_prices_history(yes_token_id, start_ts, end_ts, refresh=refresh, client=client)
+
+    frames = []
+    if not history.empty:
+        frames.append(history[["ts", "price"]].assign(source="history"))
+    minute_prices = prices_from_trades(trades)
+    if not minute_prices.empty:
+        frames.append(minute_prices[["ts", "price"]].assign(source="trades"))
+
+    if not frames:
+        return pd.DataFrame(columns=["yes_token_id", "ts", "price", "source"]), trades
+
+    prices = pd.concat(frames, ignore_index=True)
+    prices["price"] = prices["price"].astype(float)
+    prices.insert(0, "yes_token_id", yes_token_id)
+    return prices, trades
+
+
+def ingest(
+    seasons: Iterable[int], min_volume_usd: float | None = None, refresh: bool = False
+) -> dict[str, int]:
+    """Load market metadata, then prices and trades for every matched market.
+
+    `min_volume_usd` defaults to no floor. The volume floor is an eval decision
+    and Gamma under-reports volume on some events (Phase 0 found races where
+    every market reports 0 and thousands of fills), so filtering here would
+    throw away markets that demonstrably traded and cost an API call to get
+    back.
+    """
+    counts, _ = ingest_events(seasons, refresh=refresh)
+    markets = _matched_markets(seasons)
+    if min_volume_usd is not None:
+        markets = markets[markets["volume_usd"].fillna(0.0) >= min_volume_usd]
+
+    counts["price_rows"] = 0
+    counts["trade_rows"] = 0
+    con = db.connect()
+    try:
+        db.init_schema(con)
+        with session() as client:
+            for n, (_, market) in enumerate(markets.iterrows(), start=1):
+                start_ts, end_ts = openf1.race_window(market)
+                prices, trades = price_series(
+                    market["yes_token_id"],
+                    market["condition_id"],
+                    start_ts,
+                    end_ts,
+                    refresh=refresh,
+                    client=client,
+                )
+                counts["price_rows"] += db.upsert(con, "raw_market_prices", prices)
+                if not trades.empty:
+                    fills = trades.assign(yes_token_id=market["yes_token_id"])
+                    counts["trade_rows"] += db.upsert(
+                        con, "raw_market_trades", fills[list(TRADE_TABLE_COLUMNS)]
+                    )
+                if n % 50 == 0:
+                    print(f"  ingested {n}/{len(markets)} markets", flush=True)
+    finally:
+        con.close()
+    return counts
 
 
 def main() -> None:
@@ -603,4 +709,4 @@ def main() -> None:
             print(unmatched[["event_date", "event_title", "match_note"]].to_string(index=False))
         return
 
-    print(ingest(args.seasons, min_volume_usd=args.min_volume))
+    print(ingest(args.seasons, min_volume_usd=args.min_volume, refresh=args.refresh))
