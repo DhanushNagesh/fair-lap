@@ -1,9 +1,14 @@
 """Phase 0: how many races actually have a usable in-race market?
 
 For every 2023+ GP, report the share of race minutes with at least one price
-point for each driver above the volume floor. The count of races clearing
-MIN_MINUTE_COVERAGE is the size of the eval set, and that number goes in the
-README before any modelling starts.
+point for each driver above the volume floor.
+
+The eval set is every race that has a market at all; which individual
+(lap, driver) rows survive is decided row by row in eval/, on whether that
+driver's market had a fill within STALENESS_TOLERANCE_MIN of that lap. So what
+this scan produces is not a pass/fail list of races but the per-market
+freshness the row filter will apply, plus the expected retention that follows
+from it. Both numbers go in the README before any modelling starts.
 
 Two coverage numbers are reported per market, deliberately:
 
@@ -18,8 +23,9 @@ Two coverage numbers are reported per market, deliberately:
                   with a staleness tolerance will actually find, so it is the
                   number that predicts how many (lap, driver) rows survive.
 
-They measure different things and disagree by a lot. Which one gates the eval
-set is a project decision, so the scan reports all three rather than picking.
+They measure different things and disagree by a lot. `fresh_coverage` is the
+one the comparison consumes; the other two are kept so the gap between "a book
+existed" and "someone traded" stays visible rather than asserted.
 
 Output is a table (stdout) plus a CSV, so the number is reproducible rather
 than remembered.
@@ -35,9 +41,9 @@ import pandas as pd
 
 from fairlap import db
 from fairlap.config import (
+    DENSE_COVERAGE_MIN,
     MARKET_ERA_START,
     MIN_MARKET_VOLUME_USD,
-    MIN_MINUTE_COVERAGE,
     STALENESS_TOLERANCE_MIN,
     TOP_N_DRIVERS,
 )
@@ -253,15 +259,18 @@ def summarise(coverage: pd.DataFrame) -> pd.DataFrame:
             median_trade_cov=("trade_coverage", "median"),
             median_fresh_cov=("fresh_coverage", "median"),
             min_fresh_cov=("fresh_coverage", "min"),
+            fresh_minutes=("fresh_minutes", "sum"),
+            total_minutes=("total_minutes", "sum"),
             trades=("trades_in_window", "sum"),
             volume_usd=("volume_usd", "sum"),
         )
         .sort_values("race_date")
     )
-    out["in_eval_quote"] = out["median_quote_cov"] >= MIN_MINUTE_COVERAGE
-    out["in_eval_trade"] = out["median_trade_cov"] >= MIN_MINUTE_COVERAGE
-    out["in_eval_fresh"] = out["median_fresh_cov"] >= MIN_MINUTE_COVERAGE
-    return out
+    # Share of candidate (lap, driver) rows the staleness filter will keep for
+    # this race. Every race stays in the eval set; this is how much of it does.
+    out["retention"] = out["fresh_minutes"] / out["total_minutes"]
+    out["dense_coverage"] = out["median_fresh_cov"] >= DENSE_COVERAGE_MIN
+    return out.drop(columns=["fresh_minutes", "total_minutes"])
 
 
 def main() -> None:
@@ -287,12 +296,16 @@ def main() -> None:
     summary = summarise(coverage)
     print()
     print(summary.to_string(index=False))
-    threshold = f"{MIN_MINUTE_COVERAGE:.0%}"
+    top = coverage[coverage["top_n"]]
+    retention = top["fresh_minutes"].sum() / top["total_minutes"].sum()
+    dense = summary[summary["dense_coverage"]]
     print(
-        f"\nraces scanned: {len(summary)}"
-        f"\neval set at quote coverage >= {threshold}: {int(summary['in_eval_quote'].sum())}"
-        f"\neval set at trade coverage >= {threshold}: {int(summary['in_eval_trade'].sum())}"
-        f"\neval set at fresh coverage (<= {STALENESS_TOLERANCE_MIN} min stale)"
-        f" >= {threshold}: {int(summary['in_eval_fresh'].sum())}"
+        f"\neval set: {len(summary)} races with a market"
+        f"\nexpected row retention at <= {STALENESS_TOLERANCE_MIN} min staleness:"
+        f" {retention:.1%} of top-{TOP_N_DRIVERS} (lap, driver) candidates"
+        f"\ndense-coverage subgroup (median fresh >= {DENSE_COVERAGE_MIN:.0%}):"
+        f" {len(dense)} races"
+        f"\nquote coverage for reference: {top['quote_coverage'].median():.1%} median"
+        f" -- resampled, not traded; see README Limitations"
         f"\nCSV: {args.out} ({len(coverage)} market rows)"
     )

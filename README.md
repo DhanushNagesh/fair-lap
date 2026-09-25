@@ -24,22 +24,28 @@ predictions instead of ~8.
 | 4 | Evaluation vs. market | not started |
 | 5 | Replay + Streamlit dashboard | not started |
 
-**Eval set size: 23 races** (~7,900 scored `(lap, driver)` rows), out of 49
-races that have a Polymarket winner market at all and 96 race sessions since
-2023. Reproduce with `make coverage-scan`; the per-market output is committed
-at [`data/coverage.csv`](data/coverage.csv).
+**Eval set size: 49 races, ~11,700 scored `(lap, driver)` rows** — every race
+since 2023 that has a Polymarket winner market, out of 96 race sessions.
+Reproduce with `make coverage-scan`; the per-market output is committed at
+[`data/coverage.csv`](data/coverage.csv).
 
-A race enters the eval set when the median top-6 driver market has a traded
-price no more than 5 minutes stale for at least 80% of race minutes. That
-threshold is measured on **actual fills**, not on Polymarket's
-`/prices-history` series — see Limitations.
+There is no race-level coverage gate. The unit of evaluation is
+`(race, lap, driver)`, so the filter is applied per row: a row is scored only
+if that driver's market had an **actual fill** no more than 5 minutes before
+that lap ended. Across the top 6 drivers by volume, 69.8% of candidate rows
+clear that bar. Gating whole races instead would have kept 23 races and ~6,500
+rows — it discards well-priced laps because a race's median driver traded
+thinly.
 
-| Season | Races run | Winner market exists | In eval set | Median freshness |
+| Season | Races run | Winner market exists | Median row retention | Dense-coverage races |
 |---|---|---|---|---|
-| 2023 | 23 | 0 | 0 | — |
-| 2024 | 24 | 11 | 2 | 0.57 |
-| 2025 | 24 | 24 | 9 | 0.77 |
-| 2026 | 14 run of 25 | 14 | 12 | 0.91 |
+| 2023 | 23 | 0 | — | 0 |
+| 2024 | 24 | 11 | 0.51 | 2 |
+| 2025 | 24 | 24 | 0.74 | 9 |
+| 2026 | 14 run of 25 | 14 | 0.83 | 12 |
+
+"Dense coverage" is the 23-race subgroup whose median market clears 80%
+freshness, kept as a robustness split rather than as the headline.
 
 ## Results
 
@@ -70,11 +76,19 @@ make dashboard
 
 ## Limitations
 
-- **The eval set is 23 of 96 race sessions, and here is where the other 73
+- **The eval set is 49 of 96 race sessions, and here is where the other 47
   went.** 35 races predate any Polymarket per-race F1 winner market (all of
-  2023, and 2024 up to the Dutch GP). 12 were cancelled or have not been run.
-  26 have a market whose top-6 drivers traded too thinly to price a lap: their
-  median driver had a fill within 5 minutes for under 80% of race minutes.
+  2023, and 2024 up to the Dutch GP). 12 were cancelled or have not been run
+  yet. No race with a market is excluded.
+- **Within those 49 races, ~30% of candidate rows are dropped as stale**, and
+  not evenly: median retention is 0.51 in 2024 against 0.83 in 2026. Three
+  races retain under a third of their rows (2025 Suzuka 0.17, 2024 Silverstone
+  0.23, 2026 Shanghai 0.26).
+- **Retained rows are not a random sample of laps.** Trading clusters around
+  safety cars, pit windows and position changes, so the scored population skews
+  toward eventful laps. The comparison itself is unaffected — model and market
+  are scored on identical rows — but the result generalises to "laps the market
+  was actively pricing", not to all laps.
 - **`prices-history` is not evidence a market was live.** At `fidelity=1` it
   returns a point for every minute in the window whether or not anyone traded
   — it resamples the CLOB rather than listing prints. Measured on it, all 49

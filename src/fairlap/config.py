@@ -43,8 +43,12 @@ MARKET_ERA_START = date(2024, 8, 25)
 
 # Drivers below this traded volume have stale prices and are excluded from eval.
 MIN_MARKET_VOLUME_USD = 5_000
-# Fraction of race minutes a market must cover to enter the eval set (Phase 0).
-MIN_MINUTE_COVERAGE = 0.80
+# Reporting threshold only. Races whose median top-N market clears this are the
+# "dense coverage" subgroup used for a robustness split. It does NOT gate the
+# eval set: the eval set is every race with a market, filtered row by row on
+# staleness in eval/. A race-level gate would discard well-priced laps because
+# the race's median driver traded thinly.
+DENSE_COVERAGE_MIN = 0.80
 # How stale a market print may be and still count as the price at a given
 # minute. This is the same tolerance the as-of join in transform/ will use, so
 # coverage is measured the way the comparison will actually consume it.

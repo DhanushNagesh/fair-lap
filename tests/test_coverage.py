@@ -139,3 +139,52 @@ def test_cancelled_and_future_races_are_never_scanned():
         + race_row(2, "2026-10-11T13:00:00Z", 23)
     )
     assert set(sc.race_status(races, now=NOW)["status"]) == {"not_run"}
+
+
+def market_row(session_key, driver, fresh, total=120, rank=1, volume=50_000.0):
+    return {
+        "session_key": session_key,
+        "year": 2025,
+        "circuit_short_name": "Monza",
+        "race_date": "2025-09-07",
+        "driver_name": driver,
+        "volume_usd": volume,
+        "above_volume_floor": volume >= 5_000,
+        "total_minutes": total,
+        "quote_minutes": total,
+        "trade_minutes": int(total * 0.4),
+        "fresh_minutes": fresh,
+        "quote_coverage": 1.0,
+        "trade_coverage": 0.4,
+        "fresh_coverage": fresh / total,
+        "trades_in_window": 500,
+        "volume_rank": rank,
+        "top_n": rank <= 6,
+    }
+
+
+def test_summarise_keeps_every_race_and_reports_retention_instead_of_a_gate():
+    """Option E: no race passes or fails. Retention says how much of it survives."""
+    thin = [market_row(1, f"D{i}", fresh=24, rank=i + 1) for i in range(6)]
+    dense = [market_row(2, f"D{i}", fresh=114, rank=i + 1) for i in range(6)]
+    out = sc.summarise(pd.DataFrame(thin + dense))
+
+    assert set(out["session_key"]) == {1, 2}, "a thin race is still in the eval set"
+    assert "in_eval_fresh" not in out.columns, "the race-level gate is gone"
+    assert out.set_index("session_key")["retention"].round(2).to_dict() == {1: 0.20, 2: 0.95}
+
+
+def test_dense_coverage_is_a_subgroup_flag_not_an_eval_gate():
+    thin = [market_row(1, f"D{i}", fresh=24, rank=i + 1) for i in range(6)]
+    dense = [market_row(2, f"D{i}", fresh=114, rank=i + 1) for i in range(6)]
+    out = sc.summarise(pd.DataFrame(thin + dense)).set_index("session_key")
+    assert out["dense_coverage"].to_dict() == {1: False, 2: True}
+
+
+def test_retention_ignores_drivers_outside_the_top_n():
+    """A 20th-place driver's dead market must not drag the race's retention down."""
+    top = [market_row(1, f"D{i}", fresh=114, rank=i + 1) for i in range(6)]
+    tail = [market_row(1, f"T{i}", fresh=0, rank=7 + i, volume=100.0) for i in range(14)]
+    out = sc.summarise(pd.DataFrame(top + tail))
+    assert out["retention"].round(2).tolist() == [0.95]
+    assert out["drivers"].tolist() == [6]
