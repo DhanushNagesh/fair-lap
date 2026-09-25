@@ -49,3 +49,109 @@ def minute_prices() -> pd.DataFrame:
             "price": [0.60, 0.45, 0.80, 0.25],
         }
     )
+
+
+def _ts(*values) -> pd.Series:
+    return pd.to_datetime(list(values), utc=True).astype("datetime64[ns, UTC]")
+
+
+@pytest.fixture
+def synthetic_race():
+    """A hand-built 2-driver, 5-lap race, as a RaceInputs.
+
+    Deliberately awkward: driver 1 pits into a second stint on lap 3, a safety
+    car is deployed on lap 2 and withdrawn on lap 4, and the market trades at
+    three separate minutes. Every branch the leakage tests care about is
+    reachable without touching DuckDB.
+    """
+    from fairlap.transform.race_inputs import RaceInputs
+
+    base = pd.Timestamp("2025-01-01T12:00:00Z")
+    rows = []
+    for lap in range(1, 6):
+        for driver in (1, 44):
+            rows.append(
+                {
+                    "session_key": 9999,
+                    "driver_number": driver,
+                    "lap_number": lap,
+                    "date_start": base
+                    + pd.Timedelta(minutes=lap - 1)
+                    + pd.Timedelta(seconds=driver),
+                    "lap_duration": 60.0,
+                }
+            )
+    laps = pd.DataFrame(rows)
+    laps["date_start"] = laps["date_start"].astype("datetime64[ns, UTC]")
+
+    position = pd.DataFrame(
+        {
+            "session_key": 9999,
+            "driver_number": [1, 44, 1, 44],
+            "date": _ts(
+                "2025-01-01T11:59:00Z",
+                "2025-01-01T11:59:00Z",
+                "2025-01-01T12:03:30Z",
+                "2025-01-01T12:03:30Z",
+            ),
+            "position": [1, 2, 2, 1],
+        }
+    )
+    intervals = pd.DataFrame(
+        {
+            "session_key": 9999,
+            "driver_number": [1, 44],
+            "date": _ts("2025-01-01T12:01:30Z", "2025-01-01T12:01:30Z"),
+            "gap_to_leader": ["0.0", "1.5"],
+            "interval": ["0.0", "1.5"],
+        }
+    )
+    stints = pd.DataFrame(
+        {
+            "session_key": 9999,
+            "driver_number": [1, 1, 44],
+            "stint_number": [1, 2, 1],
+            "lap_start": [1, 3, 1],
+            "compound": ["SOFT", "HARD", "MEDIUM"],
+            "tyre_age_at_start": [0, 0, 2],
+        }
+    )
+    pit = pd.DataFrame({"session_key": [9999], "driver_number": [1], "lap_number": [3]})
+    race_control = pd.DataFrame(
+        {
+            "session_key": 9999,
+            "date": _ts("2025-01-01T12:01:30Z", "2025-01-01T12:03:30Z"),
+            "category": ["SafetyCar", "SafetyCar"],
+            "message": ["SAFETY CAR DEPLOYED", "SAFETY CAR IN THIS LAP"],
+            "flag": [None, None],
+            "scope": [None, None],
+            "lap_number": [2, 4],
+        }
+    )
+    market = pd.DataFrame(
+        {
+            "session_key": 9999,
+            "driver_number": [1, 44, 1, 44],
+            "ts": _ts(
+                "2025-01-01T12:00:00Z",
+                "2025-01-01T12:00:00Z",
+                "2025-01-01T12:03:00Z",
+                "2025-01-01T12:03:00Z",
+            ),
+            "price": [0.60, 0.45, 0.80, 0.25],
+        }
+    )
+    return RaceInputs(
+        session_key=9999,
+        year=2025,
+        circuit_key=7,
+        circuit_short_name="Testing",
+        total_laps=5,
+        laps=laps,
+        position=position,
+        intervals=intervals,
+        stints=stints,
+        pit=pit,
+        race_control=race_control,
+        market=market,
+    )

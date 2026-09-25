@@ -18,11 +18,11 @@ predictions instead of ~8.
 | Phase | What | State |
 |---|---|---|
 | 0 | Market coverage scan | done |
-| 1 | Ingestion (OpenF1 + Polymarket -> DuckDB) | not started |
-| 2 | Lap-level feature table | not started |
+| 1 | Ingestion (OpenF1 + Polymarket -> DuckDB) | done |
+| 2 | Lap-level feature table | done |
 | 3 | Baselines, logistic, GBM | not started |
 | 4 | Evaluation vs. market | not started |
-| 5 | Replay + Streamlit dashboard | not started |
+| 5 | Replay + Streamlit dashboard | streamer done, dashboard not started |
 
 **Eval set size: 48 usable races, ~14,600 scored `(lap, driver)` rows** — out of
 49 races that have a Polymarket winner market and 96 race sessions since 2023.
@@ -56,6 +56,19 @@ effectively the whole field, so the de-vig is not normalising across a stub.
 
 "Dense coverage" is a 25-race subgroup whose median market clears 80%
 freshness, kept as a robustness split rather than as the headline.
+
+**Feature table: 93,650 rows across 84 races** — one per
+`(session_key, lap_number, driver_number)`, which is every lap OpenF1 recorded.
+15,386 of those rows carry a de-vigged market price; the rest are still valid
+model rows and are excluded only from the market comparison, in `eval/`.
+
+The table is checked against the replay rather than by inspection.
+`replay/stream_race.stream` rebuilds each lap from history truncated at that
+lap's end, running the same functions `build_features` runs, and
+`tests/test_leakage.py` asserts the two agree on every feature column. Three
+deliberately injected leaks — a `direction="nearest"` join, a dropped staleness
+tolerance, and `expected_remaining_stops` reading the driver's final stop count
+— each fail that test.
 
 ## Results
 
@@ -114,6 +127,29 @@ make dashboard
 - **Coverage improves sharply over time.** 2024 is thin (median freshness
   0.57), 2026 is dense (0.91). Any result split by season is partly a
   statement about market maturity, not only about the model.
+- **`total_laps` is the laps the race actually ran.** That equals the scheduled
+  distance except in a race cut short by a red flag, where it quietly encodes
+  that the race ended early — `lap_fraction` and `laps_remaining` inherit it.
+  OpenF1 does not expose scheduled distance, so the honest options were this or
+  dropping the feature; it is the one approximation in the table that a lap at
+  time *t* could not have known.
+- **Pit-stop counts come from stints, not from `pit`.** OpenF1 published no
+  `pit` data at all for the first six races of 2023 and undercounts it in nine
+  more, so a pit-derived stop count reports zero stops for races that plainly
+  had them. A driver on their *n*th stint has stopped *n*-1 times. In
+  red-flagged races OpenF1 also emits several stints sharing one start lap
+  (Melbourne 2025 gives driver 5 two stints beginning on lap 3), which are
+  collapsed to one — so stop counts in red-flag races remain the least
+  trustworthy column in the table.
+- **No qualifying data, so no `quali_gap_s`.** Only race sessions are ingested.
+  `grid_position` is recovered from the first position report of the session,
+  which OpenF1 emits before the start; the qualifying *margin* would need
+  qualifying sessions ingested and is not in the table.
+- **The market does not sum to 1 across a lap.** De-vigging normalises within a
+  minute, and drivers cross the line seconds apart, so two drivers on the same
+  lap can be priced from different minutes. The paired comparison is row by
+  row, so this does not affect it, but per-lap market totals are near 1 rather
+  than exactly 1.
 - **Stale prices.** Drivers under the volume floor are excluded, and minutes
   with no trade are dropped rather than forward-filled.
 - **The vig.** Polymarket driver prices sum above 1; every comparison de-vigs

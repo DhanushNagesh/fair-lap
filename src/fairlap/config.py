@@ -65,6 +65,17 @@ OVERROUND_BAND = (0.85, 1.6)
 # and would drag every race below the threshold.
 TOP_N_DRIVERS = 6
 
+# Rolling pace window, in laps. Backward-looking: the mean of the last N
+# completed laps, which at lap t includes lap t itself and nothing after it.
+PACE_WINDOW_LAPS = 5
+# A stop needs laps left to happen in. With fewer than this remaining,
+# expected_remaining_stops is 0 regardless of what the circuit prior says.
+PIT_WINDOW_MIN_LAPS_REMAINING = 3
+# The market panel is built on a one-minute grid, so the grid minute at or
+# before a lap end is never more than 59s old. Staleness is already enforced
+# when the panel is built; this tolerance only bridges lap end to grid minute.
+MARKET_GRID_TOLERANCE_S = 60
+
 # Train/test split: fixed by season, never by row.
 TRAIN_SEASONS = (2023, 2024)
 TEST_SEASONS = (2025, 2026)
