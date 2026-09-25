@@ -86,7 +86,8 @@ bug in ingestion, not a note for the README.
 ## Non-negotiable rules
 
 These are written as tests in `tests/test_leakage.py`. Do not weaken a test to
-make something pass.
+make something pass. They are non-negotiable in the sense that they cannot be
+changed unilaterally — see "Challenging a rule" below.
 
 1. A feature at lap *t* uses only data timestamped ≤ the end of lap *t*.
 2. No feature derived from the final classification, the driver's total pit
@@ -99,6 +100,31 @@ make something pass.
 5. De-vig before any model/market comparison.
 6. Bootstrap CIs resample whole races. Laps within a race are near-perfectly
    correlated, so a row-level bootstrap invents significance.
+
+## Challenging a rule
+
+Every rule in this file and in the sub-directory CLAUDE.md files is open to
+challenge. If a genuinely better alternative turns up — one that makes the
+comparison more honest, not just more convenient — raise it. Silently following
+a rule you believe is wrong is worse than arguing about it.
+
+What a challenge may not do is decide. Do not edit a rule, work around it, or
+start building against the alternative until I have picked. Bring it to me as a
+decision:
+
+- State which rule is in question and what specifically broke or changed to
+  put it in question.
+- List the options, including keeping the rule as it is.
+- Pros and cons **beside each option**, not in a paragraph afterwards. Include
+  what each option costs in credibility, not only in effort.
+- A recommendation strength per option — how strongly you back it and why. Not
+  a neutral survey: say which one you would pick and how confident you are.
+- Name the option that is easiest to defend in an interview, if that differs
+  from the one you recommend.
+
+The rules exist to keep the model-vs-market comparison trustworthy, so the bar
+for changing one is evidence, not taste. "This is awkward to implement" is not a
+challenge. "The data does not exist for the seasons this rule assumes" is.
 
 ## Working rules
 
