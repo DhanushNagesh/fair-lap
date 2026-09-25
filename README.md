@@ -24,27 +24,37 @@ predictions instead of ~8.
 | 4 | Evaluation vs. market | not started |
 | 5 | Replay + Streamlit dashboard | not started |
 
-**Eval set size: 49 races, ~11,700 scored `(lap, driver)` rows** — every race
-since 2023 that has a Polymarket winner market, out of 96 race sessions.
-Reproduce with `make coverage-scan`; the per-market output is committed at
-[`data/coverage.csv`](data/coverage.csv).
+**Eval set size: 48 usable races, ~14,600 scored `(lap, driver)` rows** — out of
+49 races that have a Polymarket winner market and 96 race sessions since 2023.
+Reproduce with `make coverage-scan`; the output is committed at
+[`data/coverage.csv`](data/coverage.csv) (per market) and
+[`data/coverage_races.csv`](data/coverage_races.csv) (per race).
 
-There is no race-level coverage gate. The unit of evaluation is
+A race is usable if at least two above-floor drivers are priced **in the same
+minute** with a plausible overround — de-vigging normalises across the field at
+one timestamp, so per-driver coverage alone does not make a lap scoreable. One
+race fails: the 2024 British GP had only two markets clear the volume floor and
+their prices sum to 0.57, so the field is too incomplete to de-vig.
+
+There is no race-level coverage gate beyond that. The unit of evaluation is
 `(race, lap, driver)`, so the filter is applied per row: a row is scored only
 if that driver's market had an **actual fill** no more than 5 minutes before
-that lap ended. Across the top 6 drivers by volume, 69.8% of candidate rows
-clear that bar. Gating whole races instead would have kept 23 races and ~6,500
-rows — it discards well-priced laps because a race's median driver traded
-thinly.
+that lap ended. Across the top 6 drivers by volume, 71.2% of candidate rows
+clear that bar. Gating whole races on coverage instead would have kept 25 races
+and ~6,500 rows — it discards well-priced laps because a race's median driver
+traded thinly.
 
-| Season | Races run | Winner market exists | Median row retention | Dense-coverage races |
-|---|---|---|---|---|
-| 2023 | 23 | 0 | — | 0 |
-| 2024 | 24 | 11 | 0.51 | 2 |
-| 2025 | 24 | 24 | 0.74 | 9 |
-| 2026 | 14 run of 25 | 14 | 0.83 | 12 |
+| Season | Races run | Winner market | Usable | Median usable minutes | Scored pairs |
+|---|---|---|---|---|---|
+| 2023 | 23 | 0 | 0 | — | 0 |
+| 2024 | 24 | 11 | 10 | 0.67 | 4,035 |
+| 2025 | 24 | 24 | 24 | 0.98 | 16,362 |
+| 2026 | 14 run of 25 | 14 | 14 | 1.00 | 10,298 |
 
-"Dense coverage" is the 23-race subgroup whose median market clears 80%
+Median overround on usable minutes is 1.00–1.02, i.e. the above-floor set is
+effectively the whole field, so the de-vig is not normalising across a stub.
+
+"Dense coverage" is a 25-race subgroup whose median market clears 80%
 freshness, kept as a robustness split rather than as the headline.
 
 ## Results
@@ -80,7 +90,11 @@ make dashboard
   went.** 35 races predate any Polymarket per-race F1 winner market (all of
   2023, and 2024 up to the Dutch GP). 12 were cancelled or have not been run
   yet. No race with a market is excluded.
-- **Within those 49 races, ~30% of candidate rows are dropped as stale**, and
+- **2024 is the weak season and it is weak in two ways at once**: only 11 races
+  have a market, and those that do have a median 7 drivers above the volume
+  floor against 17.5 in 2025. Any 2024-vs-later split is partly a statement
+  about market depth.
+- **Within those 49 races, ~29% of candidate rows are dropped as stale**, and
   not evenly: median retention is 0.51 in 2024 against 0.83 in 2026. Three
   races retain under a third of their rows (2025 Suzuka 0.17, 2024 Silverstone
   0.23, 2026 Shanghai 0.26).
@@ -103,7 +117,12 @@ make dashboard
 - **Stale prices.** Drivers under the volume floor are excluded, and minutes
   with no trade are dropped rather than forward-filled.
 - **The vig.** Polymarket driver prices sum above 1; every comparison de-vigs
-  first.
+  first, across the drivers that cleared the volume floor at that timestamp.
+- **Gamma under-reports volume.** The 2026 Australian and Chinese GPs report
+  lifetime volume 0 on every market despite 2,500+ fills each during the race.
+  The volume floor therefore takes the larger of reported volume and notional
+  observed in the race window. That fallback is conservative: where Gamma does
+  report volume, in-window notional is a median 13% of it.
 - **`prices-history` gaps.** Empty responses for some resolved markets
   (Polymarket issue #216). Fallback rebuilds prices from `/trades`, Yes only.
 - **2026 regulations.** Team form shifted. Treated with a season feature and a

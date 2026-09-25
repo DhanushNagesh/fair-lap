@@ -188,3 +188,25 @@ def test_retention_ignores_drivers_outside_the_top_n():
     out = sc.summarise(pd.DataFrame(top + tail))
     assert out["retention"].round(2).tolist() == [0.95]
     assert out["drivers"].tolist() == [6]
+
+
+def price_rows(minutes_and_prices):
+    df = pd.DataFrame(
+        {
+            "ts": pd.to_datetime([f"2025-09-21T11:{m:02d}:00Z" for m, _ in minutes_and_prices]),
+            "price": [p for _, p in minutes_and_prices],
+            "size": [100.0] * len(minutes_and_prices),
+        }
+    )
+    df["ts"] = df["ts"].dt.tz_convert("UTC")
+    return df
+
+
+def test_carry_forward_is_strictly_backward_and_expires():
+    """A price covers later minutes within tolerance, never an earlier one."""
+    grid = sc._epoch_minutes(price_rows([(m, 0.0) for m in range(0, 12)])["ts"])
+    out = sc._carry_forward(price_rows([(5, 0.60)]), grid)
+    assert pd.isna(out[4]), "a print must not price the minute before it"
+    assert out[5] == 0.60
+    assert out[10] == 0.60, "still inside the 5-minute tolerance"
+    assert pd.isna(out[11]), "stale past tolerance"

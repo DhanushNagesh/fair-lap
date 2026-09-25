@@ -53,6 +53,13 @@ DENSE_COVERAGE_MIN = 0.80
 # minute. This is the same tolerance the as-of join in transform/ will use, so
 # coverage is measured the way the comparison will actually consume it.
 STALENESS_TOLERANCE_MIN = 5
+# De-vigging normalises across the field at one timestamp, so a minute needs at
+# least this many above-floor drivers priced simultaneously to be scoreable at
+# all. One lone fresh price cannot be de-vigged against anything.
+MIN_DEVIG_DRIVERS = 2
+# Sane range for the sum of de-vig candidate prices. Far outside it means
+# drivers are missing from that minute, not that there is an edge to trade.
+OVERROUND_BAND = (0.85, 1.6)
 # Coverage is judged on the drivers who could plausibly win: the top N by
 # traded volume in that race. A 20th-place driver's market is dead by design
 # and would drag every race below the threshold.

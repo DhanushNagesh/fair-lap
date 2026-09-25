@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Iterable
+from contextlib import nullcontext
 
 import numpy as np
 import pandas as pd
@@ -43,7 +44,9 @@ from fairlap import db
 from fairlap.config import (
     DENSE_COVERAGE_MIN,
     MARKET_ERA_START,
+    MIN_DEVIG_DRIVERS,
     MIN_MARKET_VOLUME_USD,
+    OVERROUND_BAND,
     STALENESS_TOLERANCE_MIN,
     TOP_N_DRIVERS,
 )
@@ -128,6 +131,9 @@ def coverage_for_market(
         "fresh_coverage": fresh_minutes / total_minutes,
         "trades_in_window": int(len(trades)),
         "traded_size": float(trades["size"].sum()) if not trades.empty else 0.0,
+        "traded_notional_usd": (
+            float((trades["size"] * trades["price"]).sum()) if not trades.empty else 0.0
+        ),
         "first_price_ts": first,
         "last_price_ts": last,
         "source": source,
@@ -186,6 +192,78 @@ def race_status(races: pd.DataFrame, now: pd.Timestamp | None = None) -> pd.Data
     return out
 
 
+def joint_race_coverage(coverage: pd.DataFrame, refresh: bool = False, client=None) -> pd.DataFrame:
+    """Per race: minutes where enough drivers are priced *at the same time*.
+
+    Per-market freshness is not enough to know a lap is scoreable. De-vigging
+    normalises across the surviving field at one timestamp, so a minute is only
+    usable if at least MIN_DEVIG_DRIVERS above-floor drivers have a fresh price
+    in it. An overround far outside the sane band means drivers are missing from
+    that minute rather than that there is an edge, so those minutes are out too.
+    """
+    races = _race_frame(coverage["year"].unique().tolist())
+    meta = races[races["condition_id"].notna()].set_index("condition_id")
+
+    rows = []
+    ctx = nullcontext(client) if client else polymarket.session()
+    with ctx as http_client:
+        for session_key, group in coverage[coverage["above_volume_floor"]].groupby("session_key"):
+            first = meta.loc[group["condition_id"].iloc[0]]
+            start_ts, end_ts = race_window(first)
+            grid = np.arange(start_ts // 60, end_ts // 60 + 1)
+
+            priced = []
+            for condition_id in group["condition_id"]:
+                minute_prices = polymarket.prices_from_trades(
+                    polymarket.fetch_trades(
+                        condition_id, start_ts, end_ts, refresh=refresh, client=http_client
+                    )
+                )
+                priced.append(_carry_forward(minute_prices, grid))
+
+            matrix = np.vstack(priced)
+            n_fresh = (~np.isnan(matrix)).sum(axis=0)
+            overround = np.nansum(matrix, axis=0)
+            usable = (
+                (n_fresh >= MIN_DEVIG_DRIVERS)
+                & (overround > OVERROUND_BAND[0])
+                & (overround < OVERROUND_BAND[1])
+            )
+            has_pair = n_fresh >= MIN_DEVIG_DRIVERS
+            rows.append(
+                {
+                    "session_key": session_key,
+                    "drivers_above_floor": len(group),
+                    "usable_minutes": int(usable.sum()),
+                    "usable_frac": float(usable.mean()),
+                    "scored_pairs": int((~np.isnan(matrix[:, usable])).sum()),
+                    "median_overround": (
+                        float(np.median(overround[has_pair])) if has_pair.any() else float("nan")
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _carry_forward(minute_prices: pd.DataFrame, grid: np.ndarray) -> np.ndarray:
+    """Last fill at or before each minute, blanked once it goes stale.
+
+    Strictly backward, matching leakage rule 4 -- never the next print.
+    """
+    out = np.full(len(grid), np.nan)
+    if minute_prices.empty:
+        return out
+    fills = _epoch_minutes(minute_prices["ts"])
+    prices = minute_prices["price"].to_numpy()
+    order = np.argsort(fills)
+    fills, prices = fills[order], prices[order]
+    idx = np.searchsorted(fills, grid, side="right") - 1
+    safe = np.clip(idx, 0, None)
+    fresh = (idx >= 0) & ((grid - fills[safe]) <= STALENESS_TOLERANCE_MIN)
+    out[fresh] = prices[safe][fresh]
+    return out
+
+
 def scan(
     seasons: Iterable[int], min_volume_usd: float | None = None, refresh: bool = False
 ) -> pd.DataFrame:
@@ -220,7 +298,6 @@ def scan(
                     "condition_id": market["condition_id"],
                     "yes_token_id": market["yes_token_id"],
                     "volume_usd": market["volume_usd"],
-                    "above_volume_floor": bool((market["volume_usd"] or 0) >= floor),
                     **stats,
                 }
             )
@@ -229,11 +306,22 @@ def scan(
     if coverage.empty:
         return coverage
 
-    # A market with no reported volume ranks last rather than dropping out of
-    # the ranking entirely, which is what a NaN rank would do.
+    # Gamma reports volume 0 for some events whose markets demonstrably traded
+    # (2026 Melbourne and Shanghai: 2,500+ fills each, every market reported at
+    # 0). Fall back to notional actually observed in the race window. That is a
+    # conservative substitute, not a generous one: on events where Gamma does
+    # report volume, in-window notional is a median ~13% of it, so a market that
+    # clears the floor on observed fills alone would clear it comfortably on
+    # lifetime volume.
     coverage["volume_usd"] = coverage["volume_usd"].fillna(0.0)
+    coverage["effective_volume_usd"] = coverage[["volume_usd", "traded_notional_usd"]].max(axis=1)
+    coverage["above_volume_floor"] = coverage["effective_volume_usd"] >= floor
+
+    # Rank on the effective figure too: on the zero-volume events every market
+    # ties at 0, so ranking on the reported value would pick a top-6 in payload
+    # order rather than by liquidity.
     coverage["volume_rank"] = (
-        coverage.groupby("session_key")["volume_usd"]
+        coverage.groupby("session_key")["effective_volume_usd"]
         .rank(ascending=False, method="first", na_option="bottom")
         .astype(int)
     )
@@ -293,19 +381,29 @@ def main() -> None:
 
     coverage = scan(args.seasons, min_volume_usd=args.min_volume, refresh=args.refresh)
     coverage.to_csv(args.out, index=False)
-    summary = summarise(coverage)
+
+    summary = summarise(coverage).merge(
+        joint_race_coverage(coverage, refresh=args.refresh), on="session_key", how="left"
+    )
+    races_out = str(args.out).replace(".csv", "_races.csv")
+    summary.to_csv(races_out, index=False)
     print()
     print(summary.to_string(index=False))
     top = coverage[coverage["top_n"]]
     retention = top["fresh_minutes"].sum() / top["total_minutes"].sum()
     dense = summary[summary["dense_coverage"]]
+    usable = summary[summary["usable_minutes"] > 0]
     print(
-        f"\neval set: {len(summary)} races with a market"
+        f"\nraces with a market: {len(summary)}"
+        f"\nusable races (>= {MIN_DEVIG_DRIVERS} drivers priced in the same minute,"
+        f" de-viggable): {len(usable)}"
+        f"\nscored (minute, driver) pairs: {int(summary['scored_pairs'].sum()):,}"
         f"\nexpected row retention at <= {STALENESS_TOLERANCE_MIN} min staleness:"
         f" {retention:.1%} of top-{TOP_N_DRIVERS} (lap, driver) candidates"
         f"\ndense-coverage subgroup (median fresh >= {DENSE_COVERAGE_MIN:.0%}):"
         f" {len(dense)} races"
         f"\nquote coverage for reference: {top['quote_coverage'].median():.1%} median"
         f" -- resampled, not traded; see README Limitations"
-        f"\nCSV: {args.out} ({len(coverage)} market rows)"
+        f"\nCSV: {args.out} ({len(coverage)} market rows),"
+        f" {races_out} ({len(summary)} race rows)"
     )
