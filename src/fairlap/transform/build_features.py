@@ -443,13 +443,29 @@ def build(session_keys: list[int] | None = None, seasons=None) -> pd.DataFrame:
             return pd.DataFrame()
 
         out = pd.concat(frames, ignore_index=True)
+        _write(con, out, replace_all=not session_keys)
+        return out
+    finally:
+        con.close()
+
+
+def _write(con, out: pd.DataFrame, replace_all: bool) -> None:
+    """Persist the feature table.
+
+    A full build replaces it outright. A build restricted to some races
+    replaces only those races: rebuilding one session used to drop the table
+    and leave the archive holding that session alone.
+    """
+    exists = con.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = 'features'"
+    ).fetchone()
+    if replace_all or not exists:
         con.execute("DROP TABLE IF EXISTS features")
         con.register("_features", out)
         con.execute("CREATE TABLE features AS SELECT * FROM _features")
         con.unregister("_features")
-        return out
-    finally:
-        con.close()
+        return
+    db.upsert(con, "features", out, key=KEY)
 
 
 def main() -> None:
