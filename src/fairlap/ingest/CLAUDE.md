@@ -27,6 +27,18 @@ after. Only completed race sessions are targeted. Code must not contain a
 "if live, poll" branch — the replay streamer in `replay/` is what stands in for
 live.
 
+## OpenF1 specifics
+
+- A query matching no rows comes back as `404 {"detail": "No results found."}`
+  rather than `[]` — the 2023 Bahrain GP has no `pit` data at all, and an
+  unhandled 404 stops ingestion on a legitimately empty race.
+  `get_json(..., empty_on_404=True)` treats it as empty. A misspelt endpoint
+  returns the identical 404, so only ever pass that flag an endpoint name
+  already checked against `ENDPOINTS` — otherwise a typo ingests as silence.
+- Payload frames are aligned against `db.column_types(table)`, not a second
+  hand-kept column list. OpenF1 adds fields over time (`segments_sector_1`,
+  `headshot_url`) and `upsert` rejects any column the table lacks.
+
 ## Polymarket specifics
 
 - Gamma `/events?tag_id=435` lists F1 events; each driver is its own Yes/No
@@ -34,7 +46,13 @@ live.
 - CLOB `/prices-history?market=<yes_token_id>&startTs=&endTs=&fidelity=1`
   returns one point per minute. It comes back **empty** for some resolved
   markets (Polymarket issue #216). That is expected, not a bug in our code —
-  fall back to `prices_from_trades`.
+  `prices_from_trades` covers it.
+- **Both price series are stored**, tagged in `raw_market_prices.source`:
+  `history` is the book resampled to a point a minute whether or not anyone
+  traded, `trades` is a print somebody actually filled. Phase 0 showed they
+  disagree by a lot, so picking one here would decide in `ingest/` a question
+  that belongs to `transform/`. Every query against `raw_market_prices` must
+  filter on `source`; one that forgets is silently mixing quotes with fills.
 - Data API `/trades` returns Yes and No fills mixed together. Filter
   `outcome == "Yes"`, or convert a No fill with `1 - p`. Forgetting this
   produces a price series that looks plausible and is wrong.
