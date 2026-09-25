@@ -9,6 +9,10 @@ No `session_key` may appear on both sides. 2026 gets its own breakdown — the
 regulation change shifted team form, so pooling it with 2023–24 form silently
 mixes two different sports.
 
+Note that 2023 has no market at all, so it can train the model but can never
+appear in the comparison. The split that governs the *comparison* is a separate
+decision from the one that governs model training, and it is still open.
+
 ## Metrics
 
 Brier and log loss, and never only in aggregate. An overall Brier is dominated
@@ -28,8 +32,24 @@ Model vs. market on identical `(session_key, lap_number, driver_number)` rows,
 both de-vigged, inner-joined. Rules:
 
 - Drivers below the volume floor are excluded.
+- **The row filter is here, not upstream.** Every race that has a market is in
+  the eval set; a `(session_key, lap_number, driver_number)` row survives only
+  if that driver's market had a fill no more than
+  `STALENESS_TOLERANCE_MIN` before the end of that lap. Do not add a race-level
+  coverage gate — it discards well-priced laps because the race's median driver
+  traded thinly, and Phase 0 measured that cost at ~45% of the usable rows.
 - Minutes with no trade are excluded, not forward-filled. Beating a stale quote
-  is not beating the market.
+  is not beating the market. `/prices-history` does not help here: it returns a
+  point every minute whether or not anyone traded, so it cannot be used to
+  decide whether a row is scoreable.
+- Retained rows are not a random sample of laps. Trading clusters around safety
+  cars, pit windows and position changes, so the scored population skews
+  eventful. This does not bias the comparison, which is paired on identical
+  rows, but it does bound what the result generalises to and belongs in the
+  write-up. Report retained rows per race alongside the headline.
+- `coverage.csv` from Phase 0 carries per-market `fresh_coverage`, so expected
+  retention is known before the join runs: ~70% of top-6 candidate rows. A join
+  that keeps far more than that has lost the staleness check somewhere.
 - Bootstrap CIs resample **whole races**. Laps within a race are near-perfectly
   correlated; a row-level bootstrap reports intervals several times too narrow
   and manufactures significance. This is the most likely way this project

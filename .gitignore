@@ -10,3 +10,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+
+# The Phase 0 number must be reproducible, so the scan output is tracked.
+!data/coverage.csv
+!data/coverage_races.csv

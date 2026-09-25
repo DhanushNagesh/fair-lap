@@ -4,7 +4,7 @@ install:
 	uv sync --all-extras
 
 coverage-scan:
-	uv run fairlap-scan-coverage --seasons 2023 2024 2025 2026
+	uv run fairlap-scan-coverage --seasons 2023 2024 2025 2026 --out data/coverage.csv
 
 ingest:
 	uv run fairlap-ingest-openf1 --seasons 2023 2024 2025 2026
