@@ -97,12 +97,15 @@ def _fetch(
     url: str,
     params: dict[str, Any] | None,
     limiter: RateLimiter | None,
+    empty_on_404: bool = False,
 ) -> Any:
     if limiter is not None:
         limiter.acquire()
     response = client.get(url, params=params)
     if response.status_code in RETRY_STATUS:
         raise Transient(f"{response.status_code} from {url}")
+    if empty_on_404 and response.status_code == 404:
+        return []
     response.raise_for_status()
     return response.json()
 
@@ -115,6 +118,7 @@ def get_json(
     source: str | None = None,
     cache_key: str | None = None,
     refresh: bool = False,
+    empty_on_404: bool = False,
 ) -> Any:
     """GET and parse JSON, retrying transient failures. Raises on 4xx except 429.
 
@@ -122,6 +126,12 @@ def get_json(
     body written back on a miss, so re-parsing never costs an API call. An
     empty list is cached like any other body -- Polymarket returning no price
     history for a resolved market is an answer, not a failure.
+
+    `empty_on_404` exists for OpenF1, which answers a query that matches no
+    rows with 404 {"detail": "No results found."} rather than []. It answers a
+    misspelt endpoint the same way, so only call it with an endpoint name that
+    has already been checked against a known list -- otherwise a typo ingests
+    as silence.
     """
     cached = None
     if source and cache_key and not refresh:
@@ -129,7 +139,7 @@ def get_json(
         if cached is not None:
             return cached
 
-    payload = _fetch(client, url, params, limiter)
+    payload = _fetch(client, url, params, limiter, empty_on_404=empty_on_404)
 
     if source and cache_key:
         cache.write(source, cache_key, payload)

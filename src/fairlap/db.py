@@ -28,8 +28,12 @@ RAW_SCHEMA: dict[str, str] = {
     "raw_weather": "session_key, date",
     "raw_drivers": "session_key, driver_number",
     "raw_market_meta": "condition_id",
-    "raw_market_prices": "yes_token_id, ts",
-    "raw_market_trades": "transaction_hash, yes_token_id",
+    # source is part of the key: the quote series and the trade-derived series
+    # are both stored, and they collide minute for minute otherwise.
+    "raw_market_prices": "yes_token_id, ts, source",
+    # One transaction can carry two fills (same wallet, same price, seconds
+    # apart), so the hash alone is not unique within a market.
+    "raw_market_trades": "transaction_hash, yes_token_id, ts",
 }
 
 # Column types are the source payload's, not ours. Two OpenF1 fields look
@@ -190,6 +194,20 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
     """
     for table, ddl in _RAW_DDL.items():
         con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({ddl})")
+
+
+def column_types(table: str) -> dict[str, str]:
+    """Declared columns of a raw table, name -> SQL type.
+
+    Ingestion aligns payload frames against this rather than against a second
+    hand-maintained column list, so a schema change has one place to happen.
+    """
+    types: dict[str, str] = {}
+    for line in _RAW_DDL[table].strip().splitlines():
+        parts = line.strip().rstrip(",").split()
+        if len(parts) >= 2:
+            types[parts[0]] = parts[1]
+    return types
 
 
 def _key_columns(table: str, key: Sequence[str] | None) -> list[str]:

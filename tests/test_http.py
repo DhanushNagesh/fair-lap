@@ -136,3 +136,23 @@ def test_404_is_not_retried():
     with pytest.raises(httpx.HTTPStatusError):
         http.get_json(client, "https://x/nope")
     assert len(calls) == 1
+
+
+def test_openf1_no_results_404_is_an_empty_payload():
+    """OpenF1 answers a session with no pit stops with 404 "No results found.",
+    not []. Treating it as an error stops ingestion on a legitimately empty race."""
+    from fairlap.ingest import http
+
+    def handler(request):
+        return httpx.Response(404, json={"detail": "No results found."})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert http.get_json(client, "https://api.openf1.org/v1/pit", empty_on_404=True) == []
+
+
+def test_a_404_is_still_an_error_unless_asked_for():
+    from fairlap.ingest import http
+
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+    with pytest.raises(httpx.HTTPStatusError):
+        http.get_json(client, "https://api.openf1.org/v1/pit")
