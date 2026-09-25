@@ -20,16 +20,21 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager, nullcontext
 
 import httpx
 import pandas as pd
 
 from fairlap import db
 from fairlap.config import (
+    CLOB_PRICE_FIDELITY,
+    POLYMARKET_CLOB_BASE,
+    POLYMARKET_DATA_BASE,
     POLYMARKET_F1_TAG_ID,
     POLYMARKET_GAMMA_BASE,
     POLYMARKET_MAX_REQ_PER_SEC,
+    TRADES_PAGE_SIZE,
 )
 from fairlap.ingest.http import RateLimiter, get_json
 
@@ -108,6 +113,16 @@ _CIRCUIT_ALIASES: dict[str, tuple[str, ...]] = {
     "Portimao": ("portugal", "portuguese", "portimao"),
 }
 
+TRADE_COLUMNS = (
+    "transaction_hash",
+    "token_id",
+    "ts",
+    "price",
+    "size",
+    "side",
+    "outcome",
+)
+
 MARKET_META_COLUMNS = (
     "condition_id",
     "event_id",
@@ -129,8 +144,23 @@ MARKET_META_COLUMNS = (
 )
 
 
+_LIMITER: RateLimiter | None = None
+
+
 def _limiter() -> RateLimiter:
-    return RateLimiter(POLYMARKET_MAX_REQ_PER_SEC)
+    """One limiter for the process. A per-call limiter starts with a full
+    bucket and so rate-limits nothing across a loop of thousands of markets."""
+    global _LIMITER
+    if _LIMITER is None:
+        _LIMITER = RateLimiter(POLYMARKET_MAX_REQ_PER_SEC)
+    return _LIMITER
+
+
+@contextmanager
+def session() -> Iterator[httpx.Client]:
+    """A client to reuse across a scan. One TLS handshake, not one per market."""
+    with httpx.Client(timeout=30.0) as client:
+        yield client
 
 
 def _json_field(value, default=None):
@@ -205,7 +235,7 @@ def _gamma_events(refresh: bool = False) -> list[dict]:
     limiter = _limiter()
     events: list[dict] = []
     offset = 0
-    with httpx.Client(timeout=30.0) as client:
+    with session() as client:
         while True:
             page = get_json(
                 client,
@@ -415,14 +445,100 @@ def ingest_events(
     return counts, report
 
 
-def fetch_prices_history(yes_token_id: str, start_ts: int, end_ts: int) -> pd.DataFrame:
-    """Per-minute Yes price for one driver market (fidelity=1)."""
-    raise NotImplementedError
+def fetch_prices_history(
+    yes_token_id: str,
+    start_ts: int,
+    end_ts: int,
+    refresh: bool = False,
+    client: httpx.Client | None = None,
+) -> pd.DataFrame:
+    """Per-minute Yes price for one driver market (fidelity=1).
+
+    This is a resampled series off the CLOB, not a list of prints: it returns a
+    point for every minute in the window whether or not anyone traded. Empty
+    comes back for some resolved markets (Polymarket issue #216), which is what
+    the /trades fallback exists for.
+    """
+    limiter = _limiter()
+    with nullcontext(client) if client else session() as http_client:
+        payload = get_json(
+            http_client,
+            f"{POLYMARKET_CLOB_BASE}/prices-history",
+            params={
+                "market": yes_token_id,
+                "startTs": start_ts,
+                "endTs": end_ts,
+                "fidelity": CLOB_PRICE_FIDELITY,
+            },
+            limiter=limiter,
+            source=SOURCE,
+            cache_key=f"history_{yes_token_id}_{start_ts}_{end_ts}",
+            refresh=refresh,
+        )
+
+    history = (payload or {}).get("history") or []
+    if not history:
+        return pd.DataFrame(columns=["ts", "price"])
+    out = pd.DataFrame(history).rename(columns={"t": "ts", "p": "price"})
+    out["ts"] = pd.to_datetime(out["ts"], unit="s", utc=True)
+    return out[["ts", "price"]]
 
 
-def fetch_trades(yes_token_id: str, start_ts: int, end_ts: int) -> pd.DataFrame:
-    """Raw fills for one market, Yes and No mixed, as returned by the API."""
-    raise NotImplementedError
+def fetch_trades(
+    condition_id: str,
+    start_ts: int,
+    end_ts: int,
+    refresh: bool = False,
+    client: httpx.Client | None = None,
+) -> pd.DataFrame:
+    """Raw fills for one market, Yes and No mixed, as returned by the API.
+
+    Keyed on condition_id rather than the Yes token: /trades takes `market` as
+    a conditionId and returns both sides, which is the point -- a No fill is a
+    Yes price too, once inverted.
+
+    There is no time filter on the endpoint, so pages come back newest-first
+    and paging stops once a page ends before the window opens.
+    """
+    limiter = _limiter()
+    rows: list[dict] = []
+    offset = 0
+    with nullcontext(client) if client else session() as http_client:
+        while True:
+            page = get_json(
+                http_client,
+                f"{POLYMARKET_DATA_BASE}/trades",
+                params={
+                    "market": condition_id,
+                    "limit": TRADES_PAGE_SIZE,
+                    "offset": offset,
+                },
+                limiter=limiter,
+                source=SOURCE,
+                cache_key=f"trades_{condition_id}_off{offset}",
+                refresh=refresh,
+            )
+            if not page:
+                break
+            rows.extend(page)
+            if len(page) < TRADES_PAGE_SIZE or min(t["timestamp"] for t in page) < start_ts:
+                break
+            offset += TRADES_PAGE_SIZE
+
+    if not rows:
+        return pd.DataFrame(columns=TRADE_COLUMNS)
+
+    trades = pd.DataFrame(rows)
+    trades = trades[(trades["timestamp"] >= start_ts) & (trades["timestamp"] <= end_ts)]
+    if trades.empty:
+        return pd.DataFrame(columns=TRADE_COLUMNS)
+
+    trades = trades.assign(
+        ts=pd.to_datetime(trades["timestamp"], unit="s", utc=True),
+        price=trades["price"].astype(float),
+        size=trades["size"].astype(float),
+    ).rename(columns={"transactionHash": "transaction_hash", "asset": "token_id"})
+    return trades[list(TRADE_COLUMNS)]
 
 
 def prices_from_trades(trades: pd.DataFrame) -> pd.DataFrame:
@@ -431,8 +547,32 @@ def prices_from_trades(trades: pd.DataFrame) -> pd.DataFrame:
     Fallback for markets where prices-history is empty. No trades in a minute
     means no row -- never forward-fill here; a stale price must be visibly
     absent so eval can exclude the minute.
+
+    A No fill at p is a Yes price of 1 - p. Dropping them instead would throw
+    away half the prints and understate how live the market was.
     """
-    raise NotImplementedError
+    if trades.empty:
+        return pd.DataFrame(columns=["ts", "price", "size"])
+
+    yes = trades.copy()
+    is_no = yes["outcome"].str.lower() == "no"
+    yes["price"] = yes["price"].where(~is_no, 1.0 - yes["price"])
+    yes["minute"] = yes["ts"].dt.floor("min")
+
+    # Size-weighted mean within the minute: a 1-lot print should not outvote a
+    # 10k-lot one just for landing in the same minute.
+    grouped = yes.groupby("minute", sort=True)
+    weighted = grouped.apply(
+        lambda g: (
+            (g["price"] * g["size"]).sum() / g["size"].sum()
+            if g["size"].sum() > 0
+            else g["price"].mean()
+        ),
+        include_groups=False,
+    )
+    out = weighted.rename("price").reset_index().rename(columns={"minute": "ts"})
+    out["size"] = grouped["size"].sum().to_numpy()
+    return out
 
 
 def ingest(seasons: Iterable[int], min_volume_usd: float | None = None) -> dict[str, int]:

@@ -7,6 +7,7 @@ change when a tier or endpoint moves.
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,11 +28,31 @@ POLYMARKET_CLOB_BASE = "https://clob.polymarket.com"
 POLYMARKET_DATA_BASE = "https://data-api.polymarket.com"
 POLYMARKET_F1_TAG_ID = 435
 POLYMARKET_MAX_REQ_PER_SEC = 5
+# /prices-history resolution. 1 = one point per minute, the finest offered.
+CLOB_PRICE_FIDELITY = 1
+# /trades has no time filter, so a window is reached by paging newest-first.
+TRADES_PAGE_SIZE = 500
+
+# From this race on, Polymarket ran a per-driver winner market for every F1
+# race. Before it, coverage is genuinely patchy: the 2024 British GP has one,
+# the Hungarian and Belgian GPs three weeks later have none. So a race after
+# this date with no matched market is a matcher failure and fails the scan,
+# while an earlier one is simply a market that never existed. Races before the
+# era that do have a market are still scanned.
+MARKET_ERA_START = date(2024, 8, 25)
 
 # Drivers below this traded volume have stale prices and are excluded from eval.
 MIN_MARKET_VOLUME_USD = 5_000
 # Fraction of race minutes a market must cover to enter the eval set (Phase 0).
 MIN_MINUTE_COVERAGE = 0.80
+# How stale a market print may be and still count as the price at a given
+# minute. This is the same tolerance the as-of join in transform/ will use, so
+# coverage is measured the way the comparison will actually consume it.
+STALENESS_TOLERANCE_MIN = 5
+# Coverage is judged on the drivers who could plausibly win: the top N by
+# traded volume in that race. A 20th-place driver's market is dead by design
+# and would drag every race below the threshold.
+TOP_N_DRIVERS = 6
 
 # Train/test split: fixed by season, never by row.
 TRAIN_SEASONS = (2023, 2024)

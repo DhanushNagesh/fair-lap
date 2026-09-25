@@ -50,8 +50,16 @@ ENDPOINTS = (
 )
 
 
+_LIMITER: RateLimiter | None = None
+
+
 def _limiter() -> RateLimiter:
-    return RateLimiter(OPENF1_MAX_REQ_PER_SEC, OPENF1_MAX_REQ_PER_MIN)
+    """One limiter for the process. Rebuilding it per call hands back a full
+    token bucket every time, which enforces nothing across a loop."""
+    global _LIMITER
+    if _LIMITER is None:
+        _LIMITER = RateLimiter(OPENF1_MAX_REQ_PER_SEC, OPENF1_MAX_REQ_PER_MIN)
+    return _LIMITER
 
 
 def fetch_sessions(seasons: Iterable[int], refresh: bool = False) -> pd.DataFrame:
