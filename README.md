@@ -24,8 +24,25 @@ predictions instead of ~8.
 | 4 | Evaluation vs. market | not started |
 | 5 | Replay + Streamlit dashboard | streamer done, dashboard not started |
 
-**Eval set size: 48 usable races, ~14,600 scored `(lap, driver)` rows** — out of
-49 races that have a Polymarket winner market and 96 race sessions since 2023.
+**Eval set size: 48 usable races, 15,486 scored `(race, lap, driver)` rows** —
+out of 49 races that have a Polymarket winner market and 96 race sessions since
+2023.
+
+Two row counts appear on this page and they are in **different units**, so they
+are not meant to agree:
+
+| Number | Unit | What it is | Where from |
+|---|---|---|---|
+| **30,695** | `(minute, driver)` pairs | Phase 0's pre-build *estimate*, on a one-minute grid | `make coverage-scan` |
+| **15,486** | `(race, lap, driver)` rows | the **actual eval set**, realised in the feature table | `make features` |
+
+The lap count is roughly half the minute count because a race runs ~110 minutes
+but ~57 laps per driver: the Phase 0 grid counts every above-floor driver in
+every usable *minute*, while the feature table has one row per *lap* a driver
+actually completed. Both agree on 48 usable races, which is the number that
+gates the project. **15,486 is the eval set**; 30,695 is the forecast that
+justified building it.
+
 Reproduce with `make coverage-scan`; the output is committed at
 [`data/coverage.csv`](data/coverage.csv) (per market) and
 [`data/coverage_races.csv`](data/coverage_races.csv) (per race).
@@ -41,15 +58,37 @@ There is no race-level coverage gate beyond that. The unit of evaluation is
 if that driver's market had an **actual fill** no more than 5 minutes before
 that lap ended. Across the top 6 drivers by volume, 71.2% of candidate rows
 clear that bar. Gating whole races on coverage instead would have kept 25 races
-and ~6,500 rows — it discards well-priced laps because a race's median driver
-traded thinly.
+and ~6,500 `(minute, driver)` pairs — it discards well-priced laps because a
+race's median driver traded thinly.
 
-| Season | Races run | Winner market | Usable | Median usable minutes | Scored pairs |
+Phase 0, per season — the estimate, in `(minute, driver)` pairs:
+
+| Season | Races run | Winner market | Usable races | Median usable minute fraction | Scored `(minute, driver)` pairs |
 |---|---|---|---|---|---|
-| 2023 | 23 | 0 | 0 | — | 0 |
-| 2024 | 24 | 11 | 10 | 0.67 | 4,035 |
-| 2025 | 24 | 24 | 24 | 0.98 | 16,362 |
-| 2026 | 14 run of 25 | 14 | 14 | 1.00 | 10,298 |
+| 2023 | 22 of 23 scheduled | 0 | 0 | — | 0 |
+| 2024 | 24 of 24 | 11 | 10 | 0.67 | 4,035 |
+| 2025 | 24 of 24 | 24 | 24 | 0.98 | 16,362 |
+| 2026 | 14 of 25 | 14 | 14 | 1.00 | 10,298 |
+| **all** | **84 of 96** | **49** | **48** | — | **30,695** |
+
+The 96 scheduled race sessions account for as: **84 run** (3 cancelled, 9 of
+2026 not yet held), of which **49** have a Polymarket winner market and **48**
+are usable. The 84 are exactly the races in the feature table.
+
+The realised eval set, per season — in `(race, lap, driver)` rows, the unit the
+comparison is actually scored in:
+
+| Season | Races priced | Lap rows with an in-race price | Races with a pre-race anchor | Lap rows with a pre-race anchor |
+|---|---|---|---|---|
+| 2023 | 0 | 0 | 0 | 0 |
+| 2024 | 10 | 2,185 | 9 | 3,432 |
+| 2025 | 24 | 8,443 | 24 | 14,214 |
+| 2026 | 14 | 4,858 | 12 | 6,549 |
+| **all** | **48** | **15,486** | **45** | **24,195** |
+
+The anchor column is larger than the in-race one because a pre-race price is a
+single constant broadcast to every lap that driver ran, whereas an in-race
+price has to be fresh at that particular lap.
 
 Median overround on usable minutes is 1.00–1.02, i.e. the above-floor set is
 effectively the whole field, so the de-vig is not normalising across a stub.
@@ -57,12 +96,13 @@ effectively the whole field, so the de-vig is not normalising across a stub.
 "Dense coverage" is a 25-race subgroup whose median market clears 80%
 freshness, kept as a robustness split rather than as the headline.
 
-**Feature table: 93,650 rows across 84 races** — one per
+**Feature table: 93,650 `(race, lap, driver)` rows across 84 races** — one per
 `(session_key, lap_number, driver_number)`, which is every lap OpenF1 recorded.
-15,486 of those rows carry a de-vigged in-race market price; the rest are still
-valid model rows and are excluded only from the market comparison, in `eval/`.
+15,486 of those rows carry a de-vigged in-race market price — that subset is the
+eval set above. The rest are still valid model rows and are excluded only from
+the market comparison, in `eval/`.
 
-A further 24,195 rows carry `p_market_prerace`, the **de-vigged closing line**:
+24,195 rows carry `p_market_prerace`, the **de-vigged closing line**:
 each driver's last fill in the hour before lights out, normalised across the
 grid. 45 of the 49 market races get one — the other four (2024 Silverstone and
 Las Vegas, 2026 Melbourne and Shanghai) have pre-race books summing to
@@ -157,9 +197,10 @@ make dashboard
 ## Limitations
 
 - **The eval set is 49 of 96 race sessions, and here is where the other 47
-  went.** 35 races predate any Polymarket per-race F1 winner market (all of
-  2023, and 2024 up to the Dutch GP). 12 were cancelled or have not been run
-  yet. No race with a market is excluded.
+  went.** 35 races ran but predate any Polymarket per-race F1 winner market
+  (all of 2023, and 2024 up to the Dutch GP). 12 never ran: 3 cancelled and 9
+  of the 2026 calendar not yet held. No race with a market is excluded.
+  49 + 35 + 12 = 96.
 - **2024 is the weak season and it is weak in two ways at once**: only 11 races
   have a market, and those that do have a median 7 drivers above the volume
   floor against 17.5 in 2025. Any 2024-vs-later split is partly a statement
