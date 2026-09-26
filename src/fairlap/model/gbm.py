@@ -16,8 +16,20 @@ CATEGORICAL = ("compound",)
 
 
 def normalise_by_lap(df: pd.DataFrame, col: str = "p_raw") -> pd.Series:
-    """Scale probabilities so each lap sums to 1 over the drivers still running."""
-    raise NotImplementedError
+    """Scale probabilities so each lap sums to 1 over the drivers still running.
+
+    "Still running" needs no retirement column: the feature table only has a
+    row for a lap a driver actually completed, so the rows present at
+    (session_key, lap_number) are exactly the surviving field.
+
+    Nulls stay null and are left out of the denominator. That is deliberate for
+    the frozen market baseline, where an unpriced driver has no opinion to
+    renormalise -- filling them with a number would invent a quote. A lap whose
+    raw values sum to zero also stays null rather than dividing by zero.
+    """
+    p = pd.to_numeric(df[col], errors="coerce")
+    total = p.groupby([df["session_key"], df["lap_number"]]).transform("sum")
+    return p.div(total.where(total > 0))
 
 
 class LogisticModel:
