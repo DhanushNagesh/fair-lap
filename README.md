@@ -230,14 +230,20 @@ races) rather than a tie on the merits.
 
 > The model **loses to the market in the middle phase of a green-flag race**
 > (Brier 0.0737 vs 0.0414, difference +0.0324, 95% race-clustered CI +0.0160 to
-> +0.0505, over 8,499 rows in 36 races), **because its information is track
-> position and the market's includes strategic intent.** The deficit is not a
-> uniform handicap — the GBM is actually ahead in 15 of 36 races and the median
-> per-race difference is +0.003 — it is a tail of races where the car in front
-> is not the car about to win.
+> +0.0505, over 8,499 rows in 36 races), **because it writes off drivers who go
+> on to win and the market does not.** The deficit is not a uniform handicap —
+> the GBM is actually ahead in 15 of 36 races and the median per-race
+> difference is +0.003 — it is a tail of races where the car in front is not
+> the car about to win.
 
-The mechanism, as a diagnostic rather than a headline: splitting the scored
-rows on whether the eventual winner was *already leading* that lap gives
+The "because" is deliberately a *failure mode* and not a cause. The failure
+mode is measured, twice over: in the calibration curve below, and in the
+outcome-conditioned diagnostic that follows. *Why* it writes them off is a
+separate question, and the first answer this project tried turned
+out to be wrong — see [the rejected explanation](#a-rejected-explanation-pit-intent).
+
+The same failure mode localised, as a diagnostic and not a headline: splitting
+the scored rows on whether the eventual winner was *already leading* that lap gives
 Brier 0.0094 vs the market's 0.0231 when they were (8,697 rows, CI −0.0213 to
 −0.0075, model wins), against 0.1877 vs 0.0840 when they were not (3,991 rows,
 CI +0.069 to +0.145). On laps where the running order already matches the
@@ -246,14 +252,116 @@ it puts 0.17 on the eventual winner while the market puts 0.48.
 
 **That split conditions on the outcome, so it can only ever explain a result
 and never be one** — a model built from track position is close to guaranteed
-to look good on one side of it. It is reported because it names the missing
-feature: `expected_remaining_stops` is a per-circuit prior, not this driver's
-actual pit plan, and `pace_roll_s` is a raw lap time that does not separate
-traffic from fuel load from tyre age. The market prices the undercut that is
-halfway through happening; the feature table cannot see it. The five worst
-races are exactly that shape — Monza 2026 won from P19, Jeddah 2025, Lusail
-2025, Silverstone 2025 — while the races the model wins are the lights-to-flag
-ones.
+to look good on one side of it. It is reported because it localises the
+deficit: the five worst races are all ones where the winner came from behind
+(Monza 2026 won from P19, Jeddah 2025, Lusail 2025, Silverstone 2025), while
+the races the model wins are the lights-to-flag ones.
+
+### A rejected explanation: pit intent
+
+The obvious reading of the above is that the market prices the undercut that is
+halfway through happening — `expected_remaining_stops` is a per-circuit prior,
+not this driver's actual pit plan, so the feature table cannot see a stop
+coming. **That explanation was tested and it is wrong**, and this section
+records it because a plausible story that survives only because nobody checked
+it is worth less than a measured null.
+
+It was tested with a deliberately leaky upper bound: hand the GBM a feature
+built from pit stops that have *not happened yet* — this driver stops within
+the next N laps, plus how many of the current top 5 do — and measure how much
+of the gap perfect foreknowledge closes. Any real pit-intent feature, from any
+source, however well extracted, is bounded above by this.
+
+| | Brier | vs. plain GBM |
+|---|---|---|
+| GBM | 0.0694 | — |
+| + perfect pit oracle, 2-lap window | 0.0699 | +0.0005 |
+| + perfect pit oracle, 3-lap | 0.0697 | +0.0004 |
+| + perfect pit oracle, 5-lap | 0.0686 | **−0.0008** |
+| market | 0.0618 | −0.0076 |
+
+A perfect oracle closes **10% of the gap, with a 95% race-clustered CI of
+−0.0035 to +0.0015** — indistinguishable from nothing. The one-line reason:
+across 51,108 training rows the win rate is 5.5% for drivers not about to pit
+and 4.9% for drivers who are. Knowing who stops next says almost nothing about
+who wins, because stops are near-universal and largely self-reversing.
+
+The instrument was checked before the null was believed. The oracle flags 9.2%
+of rows, and `P(stint change within 3 laps | oracle = 1) = 0.68` against `0.033`
+when it is 0, so it discriminates; its largest correlation with any existing
+feature is 0.18, so it is not redundant.
+
+Run on 2023–24 with `GroupKFold`, so the held-out seasons are untouched and this
+cost nothing in held-out integrity. Reproduce with
+`uv run python experiments/oracle_pit_bound.py`. Two caveats: the like-for-like
+row set is 2,185 rows over 10 races of 2024, the weak market season, where the
+gap is +0.0076 rather than the +0.0231 seen on 2025–26; and the oracle covers
+pit *timing*, not compound choice or the decision to go long.
+
+### A second rejected explanation: driver and team identity
+
+`gbm.py`'s design matrix carries position, gaps, tyres and flags and **no
+driver or team identity at all**. The model cannot know that the car in P3 is a
+Red Bull with Verstappen in it, the market prices that heavily, and it is
+exactly the knowledge that should distinguish a driver who comes back from one
+who does not. Unlike the pit oracle this costs nothing to try — identity is
+knowable before lights out, so it is a legal feature, and `raw_drivers` is
+already ingested at 100% coverage.
+
+**It makes the model significantly worse.**
+
+| | Brier | vs. plain GBM | 95% CI |
+|---|---|---|---|
+| GBM | 0.0694 | — | — |
+| + team | 0.0848 | +0.0155 | +0.0038 to +0.0390 |
+| + driver | 0.1072 | **+0.0378** | +0.0127 to +0.0774 |
+| + both | 0.1082 | +0.0389 | +0.0119 to +0.0853 |
+| market | 0.0618 | −0.0076 | — |
+
+The intervals exclude zero, so this is not noise: adding driver identity makes
+the gap to the market roughly five times wider. The GBM is not ignoring the
+feature either — identity takes 9.9% of gain importance. It uses it, and it is
+worse for it.
+
+The per-race breakdown says why. Verstappen won 28 of the 46 training races.
+Identity helped in the races he won and hurt in every race he did not, most in
+the races won by the rarest winners; the correlation between the winner's share
+of training races and the Brier change is **−0.692**.
+
+| | winner | winner's share of races | Brier change |
+|---|---|---|---|
+| helped most | VER | 0.61 | −0.029 |
+| hurt most | PIA | 0.04 | +0.046 |
+| | PER | 0.04 | +0.070 |
+
+Identity is a **race-level constant**, so when it is wrong it is wrong for all
+~350 laps of that race, and Brier is quadratic. Eighteen races of confident
+wrongness cost more than twenty-eight races of being slightly more right. The
+model stopped reading live state and started reciting a prior.
+
+Reproduce with `uv run python experiments/identity_test.py`. Same protocol as
+the oracle: 2023–24 only, `GroupKFold` by race, held-out seasons untouched.
+Identity is encoded as a LightGBM categorical rather than a precomputed win
+rate, because a win-rate prior would have to be refit inside every fold or it
+leaks the held-out races' outcomes into the feature.
+
+### What these two rejections suggest
+
+Three measurements now point the same way. Pit intent: bounded at ~10% of the
+gap, CI straddling zero. Identity: actively harmful. And baseline B — which is
+precisely identity-as-a-frozen-prior, the de-vigged closing line held constant
+— is the worst forecaster in the results table at 0.0898.
+
+So the market's edge may not be a **feature** this model is missing. It may be
+that the market holds a strong prior *and moves off it* when live state
+disagrees, and does that better than either side of this project does
+separately: baseline B has the prior and cannot update, the GBM updates but has
+weak priors, the market does both.
+
+**That is a hypothesis and it is flagged as one.** Two plausible mechanisms in
+this section have already failed on contact with a measurement, and the way to
+settle this one is a model that carries a prior it is allowed to update away
+from — not another paragraph of reasoning.
 
 ### Calibration
 
@@ -313,12 +421,20 @@ third of the sample. Treat the sign as a curiosity, not a finding.
 
 ### What would have to change for the model to win
 
-Nothing in this repo, and that is the point of reporting it this way. The gap
-is a missing-information problem, not a tuning problem: it needs per-driver pit
-intent (team radio, live strategy calls) or a pace model that separates clean
-air from traffic. Both are outside what OpenF1's free tier publishes. Tuning
-the GBM harder against a held-out set that has now been looked at once would
-buy a better number and a worse project.
+Not pit intent, which is bounded above at ~10% of the gap with a CI straddling
+zero. Not driver or team identity, which is measurably worse. Both were the
+obvious answers and both are now closed, which is worth more than either would
+have been if it had worked.
+
+What is left is one thing this repo can test and one it cannot. It can test
+whether a model that carries an updatable prior beats one that carries none —
+that needs no new data, only a different model. It cannot currently separate
+clean-air pace from traffic, which needs the `car_data` and `location`
+endpoints OpenF1 publishes and this project does not ingest.
+
+Neither is free: the held-out seasons have been looked at once, so another
+feature round makes the 2025–26 Brier one pass of hindsight deep. Tuning the
+GBM harder against that set would buy a better number and a worse project.
 
 ## Quickstart
 
