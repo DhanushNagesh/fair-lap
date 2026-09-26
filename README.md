@@ -59,8 +59,17 @@ freshness, kept as a robustness split rather than as the headline.
 
 **Feature table: 93,650 rows across 84 races** — one per
 `(session_key, lap_number, driver_number)`, which is every lap OpenF1 recorded.
-15,386 of those rows carry a de-vigged market price; the rest are still valid
-model rows and are excluded only from the market comparison, in `eval/`.
+15,486 of those rows carry a de-vigged in-race market price; the rest are still
+valid model rows and are excluded only from the market comparison, in `eval/`.
+
+A further 24,195 rows carry `p_market_prerace`, the **de-vigged closing line**:
+each driver's last fill in the hour before lights out, normalised across the
+grid. 45 of the 49 market races get one — the other four (2024 Silverstone and
+Las Vegas, 2026 Melbourne and Shanghai) have pre-race books summing to
+0.60–0.82, so drivers are demonstrably missing and the de-vig gate rejects them
+rather than normalising against a partial field. It is de-vigged across the
+session rather than within a minute, because the anchors are last-fills at
+scattered instants and no single minute holds the whole grid.
 
 The table is checked against the replay rather than by inspection.
 `replay/stream_race.stream` rebuilds each lap from history truncated at that
@@ -79,7 +88,7 @@ completed, so the rows present at a lap *are* the surviving field.
 | Model | What it knows | Scored rows (2023–24) |
 |---|---|---|
 | `position_rate` | empirical win rate by (position, tenth-of-race) | 51,108 |
-| `frozen_prerace` | de-vigged lap-1 market price, held flat | 1,628 |
+| `frozen_prerace` | de-vigged pre-race closing line, held flat | 3,432 |
 | `logistic` | the full design matrix, linear | 51,108 |
 | `gbm` | the full design matrix, shallow LightGBM | 51,108 |
 
@@ -87,6 +96,17 @@ Every fitted model is scored **out of fold**, `GroupKFold` on `session_key`, so
 no race is ever predicted by a model that saw it. `frozen_prerace` learns
 nothing across races — its anchor is lap-1 data of the race being predicted —
 so it is not folded.
+
+`frozen_prerace` is still renormalised per lap, which is what makes it a real
+opponent rather than a fixed vector: as drivers retire they leave the lap's
+denominator and the survivors rise. It is the market's opening opinion updated
+with nothing except who is still running.
+
+The anchor was originally the lap-1 in-race price, which is ~90 seconds after
+lights out and subject to the 5-minute staleness rule. Moving to the true
+closing line took 2024 from 1,628 anchored rows to 3,432, 2025 from 12,052 to
+14,214 and 2026 from 5,952 to 6,549 — 2024 is the one that mattered, since it
+is the only market season in the training half.
 
 **The test seasons have not been scored.** `fairlap-predict` refuses
 `TEST_SEASONS` unless passed `--allow-test`, which is Phase 4's single final
@@ -189,6 +209,15 @@ make dashboard
   than exactly 1.
 - **Stale prices.** Drivers under the volume floor are excluded, and minutes
   with no trade are dropped rather than forward-filled.
+- **The pre-race window is an hour, and that is a judgement call.** Widening it
+  to 24 hours would raise 2025 from a median 10 priced markets a race to 20,
+  but those extra quotes are a day stale and calling them "the closing line"
+  would be generous. An hour is where the market is actively pricing the grid.
+- **Pre-race depth is bounded by how `/trades` pages.** The endpoint has no
+  time filter, so paging walks backwards newest-first and stops at the first
+  page reaching before the window. In a heavily traded market one 500-fill page
+  may not span the full hour, so a thin pre-race book can reflect paging depth
+  rather than genuine absence of trading.
 - **The vig.** Polymarket driver prices sum above 1; every comparison de-vigs
   first, across the drivers that cleared the volume floor at that timestamp.
 - **Gamma under-reports volume.** The 2026 Australian and Chinese GPs report
