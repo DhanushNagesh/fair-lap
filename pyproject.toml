@@ -25,6 +25,7 @@ fairlap-ingest-openf1 = "fairlap.ingest.openf1:main"
 fairlap-ingest-polymarket = "fairlap.ingest.polymarket:main"
 fairlap-features = "fairlap.transform.build_features:main"
 fairlap-replay = "fairlap.replay.stream_race:main"
+fairlap-predict = "fairlap.model.predict:main"
 fairlap-eval = "fairlap.eval.compare_market:main"
 
 [build-system]

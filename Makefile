@@ -1,4 +1,4 @@
-.PHONY: install coverage-scan ingest features replay eval dashboard test lint fmt clean
+.PHONY: install coverage-scan ingest features replay predict eval dashboard test lint fmt clean
 
 install:
 	uv sync --all-extras
@@ -15,6 +15,9 @@ features: ingest
 
 replay:
 	uv run fairlap-replay --session-key $(SESSION_KEY)
+
+predict:
+	uv run fairlap-predict
 
 eval:
 	uv run fairlap-eval
