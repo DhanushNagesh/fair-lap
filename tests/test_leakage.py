@@ -12,6 +12,8 @@ anybody thought to write a test for that particular feature.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pandas as pd
 import pytest
 
@@ -21,7 +23,14 @@ from fairlap.transform.build_features import FEATURE_COLUMNS, build_race, lap_fr
 
 PRIOR = pd.Series({7: 1.5})
 GLOBAL_PRIOR = 1.5
-COMPARED = ["session_key", "lap_number", "driver_number", *FEATURE_COLUMNS, "p_market"]
+COMPARED = [
+    "session_key",
+    "lap_number",
+    "driver_number",
+    *FEATURE_COLUMNS,
+    "p_market",
+    "p_market_prerace",
+]
 
 
 def _indexed(df: pd.DataFrame) -> pd.DataFrame:
@@ -140,6 +149,58 @@ def test_expected_remaining_stops_ignores_actual_future_stops(synthetic_race):
     # And the feature does move once the stop is genuinely in the past, or the
     # test above would pass on a column that is simply constant.
     assert full.loc[full["lap_number"] == 3, "stops_made"].max() == 1
+
+
+def test_prerace_anchor_ignores_every_fill_after_lights_out(synthetic_race):
+    """Rule 1 for Baseline B: the closing line may not see the race it opens.
+
+    The fixture trades at 12:00:00 (lights out) and 12:03:00 (lap 4). Neither
+    is before the start, so there is no anchor at all -- and a fill added
+    inside the hour before must be the one that wins, not the later ones.
+    """
+    from fairlap.transform.build_features import add_prerace_market, lap_frame
+
+    grid = lap_frame(synthetic_race)
+    assert add_prerace_market(grid, synthetic_race)["p_market_prerace"].isna().all()
+
+    early = synthetic_race.market.copy()
+    pre = pd.DataFrame(
+        {
+            "session_key": 9999,
+            "driver_number": [1, 44],
+            "ts": pd.to_datetime(["2025-01-01T11:30:00Z"] * 2, utc=True).astype(
+                "datetime64[ns, UTC]"
+            ),
+            "price": [0.70, 0.30],
+        }
+    )
+    with_pre = replace(synthetic_race, market=pd.concat([pre, early], ignore_index=True))
+    anchored = add_prerace_market(lap_frame(with_pre), with_pre)
+    by_driver = anchored.groupby("driver_number")["p_market_prerace"].first()
+    # 0.70 / (0.70 + 0.30), not the 0.80 / 0.25 the market traded at during
+    # the race, and not the 0.60 / 0.45 print at lights out.
+    assert by_driver.loc[1] == pytest.approx(0.70)
+    assert by_driver.loc[44] == pytest.approx(0.30)
+
+
+def test_prerace_anchor_stops_at_the_window_edge(synthetic_race):
+    """A fill older than PRERACE_WINDOW_MIN is not the closing line."""
+    from fairlap.transform.build_features import add_prerace_market, lap_frame
+
+    stale = pd.DataFrame(
+        {
+            "session_key": 9999,
+            "driver_number": [1, 44],
+            "ts": pd.to_datetime(["2025-01-01T10:00:00Z"] * 2, utc=True).astype(
+                "datetime64[ns, UTC]"
+            ),
+            "price": [0.70, 0.30],
+        }
+    )
+    aged = replace(
+        synthetic_race, market=pd.concat([stale, synthetic_race.market], ignore_index=True)
+    )
+    assert add_prerace_market(lap_frame(aged), aged)["p_market_prerace"].isna().all()
 
 
 def test_the_stint_end_lap_is_never_loaded():

@@ -33,6 +33,7 @@ class RaceInputs:
     circuit_key: int
     circuit_short_name: str
     total_laps: int
+    race_start: pd.Timestamp
     laps: pd.DataFrame
     position: pd.DataFrame
     intervals: pd.DataFrame
@@ -46,8 +47,8 @@ class RaceInputs:
 
         Lap-keyed tables are cut on lap number and time-keyed tables on
         timestamp, because they are indexed differently, not because the rule
-        differs. `total_laps` survives truncation on purpose: the scheduled
-        race distance is known before the race starts.
+        differs. `total_laps` and `race_start` survive truncation on purpose:
+        both are known before the race starts.
         """
         cut = {
             "laps": self.laps[self.laps["lap_number"] <= max_lap],
@@ -132,7 +133,7 @@ def load(session_key: int, con=None, market: pd.DataFrame | None = None) -> Race
     con = con or db.connect(read_only=True)
     try:
         meta = con.execute(
-            "SELECT session_key, year, circuit_key, circuit_short_name "
+            "SELECT session_key, year, circuit_key, circuit_short_name, date_start "
             "FROM raw_sessions WHERE session_key = ?",
             [session_key],
         ).fetchdf()
@@ -199,6 +200,7 @@ def load(session_key: int, con=None, market: pd.DataFrame | None = None) -> Race
         year=int(row["year"]),
         circuit_key=int(row["circuit_key"]),
         circuit_short_name=str(row["circuit_short_name"]),
+        race_start=pd.Timestamp(row["date_start"]).tz_convert("UTC"),
         # Scheduled race distance, treated as known before the race starts.
         # Derived from the laps actually run, which is the same number except
         # in a race cut short by a red flag -- see build_features for why that

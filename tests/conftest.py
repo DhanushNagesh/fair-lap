@@ -147,6 +147,7 @@ def synthetic_race():
         circuit_key=7,
         circuit_short_name="Testing",
         total_laps=5,
+        race_start=pd.Timestamp("2025-01-01T12:00:00Z"),
         laps=laps,
         position=position,
         intervals=intervals,

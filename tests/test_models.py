@@ -51,6 +51,9 @@ def synthetic_features(n_races: int = 12, n_laps: int = 20, n_drivers: int = 8) 
                         "red_flag_active": False,
                         "compound": "HARD" if lap < 15 else "MEDIUM",
                         "p_market": 0.5 if (lap == 1 and i <= 2) else np.nan,
+                        # Two drivers priced pre-race, de-vigged to sum to 1
+                        # across the pair, constant for the whole race.
+                        "p_market_prerace": {1: 0.6, 2: 0.4}.get(i, np.nan),
                         "market_overround": 1.1,
                         "circuit_stop_prior": 1.5,
                         "won": int(driver == winner),
@@ -119,36 +122,36 @@ def test_frozen_baseline_is_flat_across_the_race(features):
     assert (spread == 1).all()
 
 
-def test_frozen_baseline_ignores_prices_from_later_laps(features):
-    """The anchor is lap 1. A price appearing at lap 10 must not be picked up.
+def test_frozen_baseline_never_reads_the_in_race_price(features):
+    """Baseline B is the closing line, not a live market model.
 
-    This is the leakage guard on Baseline B: reaching forward for the first
-    non-null price would hand the frozen baseline a mid-race quote and quietly
-    turn it into a live market model.
+    The in-race `p_market` column is the market updating on the race as it
+    happens. If the frozen baseline ever picked it up it would stop being a
+    baseline and start being the thing it is supposed to be a foil for. The
+    anchor column is built before lights out -- that is enforced in
+    test_leakage.py -- so here it is enough that nothing else is consulted.
     """
-    later = features.copy()
-    mask = (later["lap_number"] == 10) & (later["driver_number"] == later["driver_number"].max())
-    later.loc[mask, "p_market"] = 0.99
-    baseline = FrozenPreRaceBaseline().predict_raw(later)
-    # The lap-10 quote must not appear anywhere, for that driver or any other.
-    assert not (baseline == 0.99).any()
-    # And a (race, driver) with no lap-1 price stays unpriced rather than
-    # inheriting one from further into the race.
-    anchored = set(
-        map(
-            tuple,
-            later.loc[
-                (later["lap_number"] == 1) & later["p_market"].notna(),
-                ["session_key", "driver_number"],
-            ].to_numpy(),
-        )
+    tampered = features.copy()
+    tampered["p_market"] = 0.99
+    assert (
+        FrozenPreRaceBaseline()
+        .predict_raw(tampered)
+        .equals(FrozenPreRaceBaseline().predict_raw(features))
     )
-    has_anchor = [
-        (sk, dn) in anchored
-        for sk, dn in zip(later["session_key"], later["driver_number"], strict=True)
-    ]
-    assert baseline[~np.array(has_anchor)].isna().all()
-    assert baseline[np.array(has_anchor)].notna().all()
+
+
+def test_frozen_baseline_needs_the_anchor_column(features):
+    with pytest.raises(KeyError, match="p_market_prerace"):
+        FrozenPreRaceBaseline().predict_raw(features.drop(columns=["p_market_prerace"]))
+
+
+def test_frozen_baseline_renormalises_as_the_field_shrinks(features):
+    """The only thing that moves the frozen line is drivers dropping out."""
+    race = features[features["session_key"] == features["session_key"].min()]
+    survivors = race[(race["lap_number"] < 10) | (race["position"] == 1)]
+    p = FrozenPreRaceBaseline().predict_proba(survivors)
+    late = p[survivors["lap_number"].to_numpy() == survivors["lap_number"].max()]
+    assert late.dropna().sum() == pytest.approx(1.0)
 
 
 def test_models_fit_and_normalise(features):

@@ -19,7 +19,7 @@ import pandas as pd
 
 from fairlap.model.gbm import normalise_by_lap
 
-FROZEN_ANCHOR_LAP = 1
+ANCHOR_COLUMN = "p_market_prerace"
 
 
 class PositionRateBaseline:
@@ -87,36 +87,34 @@ class PositionRateBaseline:
 
 
 class FrozenPreRaceBaseline:
-    """Baseline B. The de-vigged market price at the opening lap, held constant.
+    """Baseline B. The de-vigged pre-race closing line, held constant.
 
-    Nothing is learned across races, so `fit` is a no-op: the anchor is lap-1
-    data of the race being predicted, which is available at lap 1 by
-    definition. Holding it flat is the whole point -- it is the market's
-    opening opinion with no in-race updating, which is what the live model has
-    to beat.
+    Reads `p_market_prerace` straight from the feature table -- the driver's
+    last fill in the hour before lights out, de-vigged across the grid. It is
+    already one constant per (race, driver), so "frozen" is a matter of not
+    updating it rather than of picking a lap to freeze at.
 
-    A driver with no priced anchor lap gets NaN, not a guess. That driver drops
-    out of the comparison in eval/ rather than being imputed into it.
+    Renormalising per lap is what makes it a real opponent rather than a fixed
+    vector: as drivers retire they leave the lap's denominator and the
+    survivors' probabilities rise. That is the market's opening opinion updated
+    with nothing except who is still running.
+
+    Nothing is learned across races, so `fit` is a no-op.
+
+    A driver with no anchor gets NaN, not a guess -- they drop out of the
+    comparison in eval/ rather than being imputed into it.
     """
 
-    def __init__(self, anchor_lap: int = FROZEN_ANCHOR_LAP) -> None:
-        self.anchor_lap = anchor_lap
+    def __init__(self, column: str = ANCHOR_COLUMN) -> None:
+        self.column = column
 
     def fit(self, df: pd.DataFrame) -> FrozenPreRaceBaseline:
         return self
 
     def predict_raw(self, df: pd.DataFrame) -> pd.Series:
-        anchor = df.loc[df["lap_number"] == self.anchor_lap, :]
-        anchor = (
-            anchor[["session_key", "driver_number", "p_market"]]
-            .dropna(subset=["p_market"])
-            .drop_duplicates(subset=["session_key", "driver_number"], keep="first")
-            .rename(columns={"p_market": "p_anchor"})
-        )
-        merged = df[["session_key", "driver_number"]].merge(
-            anchor, on=["session_key", "driver_number"], how="left"
-        )
-        return pd.Series(merged["p_anchor"].to_numpy(), index=df.index, dtype="float64")
+        if self.column not in df.columns:
+            raise KeyError(f"{self.column} is not in the frame; rebuild the feature table")
+        return pd.to_numeric(df[self.column], errors="coerce")
 
     def predict_proba(self, df: pd.DataFrame) -> pd.Series:
         return normalise_by_lap(df.assign(p_raw=self.predict_raw(df)))
