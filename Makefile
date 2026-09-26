@@ -1,4 +1,4 @@
-.PHONY: install coverage-scan ingest features replay predict eval dashboard test lint fmt clean
+.PHONY: install coverage-scan ingest features replay predict predict-test eval dashboard test lint fmt clean
 
 install:
 	uv sync --all-extras
@@ -19,8 +19,12 @@ replay:
 predict:
 	uv run fairlap-predict
 
-eval:
-	uv run fairlap-eval
+# The single final evaluation: fit on 2023-24, score 2025-26. Phase 4 only.
+predict-test:
+	uv run fairlap-predict --holdout
+
+eval: predict-test
+	uv run fairlap-eval --backtest --out data
 
 dashboard:
 	uv run streamlit run dashboard/app.py

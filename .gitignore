@@ -14,3 +14,6 @@ build/
 # The Phase 0 number must be reproducible, so the scan output is tracked.
 !data/coverage.csv
 !data/coverage_races.csv
+
+# The Results section quotes these, so they are tracked too.
+!data/eval_*.csv

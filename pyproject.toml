@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dashboard = ["streamlit>=1.38", "altair>=5.4"]
+plots = ["matplotlib>=3.9"]
 dev = ["pytest>=8.3", "ruff>=0.6"]
 
 [project.scripts]

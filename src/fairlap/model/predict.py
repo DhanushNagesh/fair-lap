@@ -37,6 +37,13 @@ MODELS = {
 # nothing.
 UNFITTED = {"frozen_prerace"}
 
+# fold marks how a row was scored. 0..n-1 are GroupKFold folds on the training
+# seasons, -1 is a model that learns nothing across races, and -2 is the single
+# holdout pass: fitted once on all of TRAIN_SEASONS and applied to the test
+# seasons. The distinction matters when reading the predictions table, because
+# a -2 row and a fold row are not the same kind of out-of-sample.
+HOLDOUT_FOLD = -2
+
 _DDL = """
     session_key   BIGINT,
     lap_number    BIGINT,
@@ -88,6 +95,66 @@ def out_of_fold(name: str, df: pd.DataFrame, n_splits: int = 5) -> pd.DataFrame:
     )
 
 
+def _features(con, seasons) -> pd.DataFrame:
+    df = con.execute(
+        "SELECT * FROM features WHERE season IN (SELECT UNNEST($1::BIGINT[])) "
+        "ORDER BY session_key, lap_number, driver_number",
+        [list(seasons)],
+    ).fetchdf()
+    if df.empty:
+        raise ValueError(f"no feature rows for seasons {tuple(seasons)}; run `make features`")
+    return df
+
+
+def holdout(
+    train_seasons=TRAIN_SEASONS,
+    test_seasons=TEST_SEASONS,
+    models: list[str] | None = None,
+) -> pd.DataFrame:
+    """Fit once on the training seasons, score the test seasons, write both.
+
+    This is the single final evaluation. There is no fold here and no tuning
+    against the result: each model is fitted on every training race and applied
+    to every test race, which is the split rule 3 names. Re-running it is
+    harmless (the upsert replaces the same keys) but re-running it with
+    different hyperparameters is how a held-out set stops being held out.
+    """
+    overlap = sorted(set(train_seasons) & set(test_seasons))
+    if overlap:
+        raise ValueError(f"{overlap} appear in both halves of the split")
+
+    names = models or list(MODELS)
+    con = db.connect()
+    try:
+        init_schema(con)
+        train = _features(con, train_seasons)
+        test = _features(con, test_seasons)
+
+        frames = []
+        for name in names:
+            model = MODELS[name]()
+            if name not in UNFITTED:
+                model.fit(train)
+            p = model.predict_proba(test)
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "session_key": test["session_key"].astype("int64"),
+                        "lap_number": test["lap_number"].astype("int64"),
+                        "driver_number": test["driver_number"].astype("int64"),
+                        "model": name,
+                        "p": p.to_numpy(),
+                        "fold": HOLDOUT_FOLD,
+                    }
+                )
+            )
+        out = pd.concat(frames, ignore_index=True)
+        db.upsert(con, "predictions", out, key=KEY)
+        return out
+    finally:
+        con.close()
+
+
 def run(
     seasons=TRAIN_SEASONS,
     models: list[str] | None = None,
@@ -107,13 +174,7 @@ def run(
     con = db.connect()
     try:
         init_schema(con)
-        df = con.execute(
-            "SELECT * FROM features WHERE season IN (SELECT UNNEST($1::BIGINT[])) "
-            "ORDER BY session_key, lap_number, driver_number",
-            [list(seasons)],
-        ).fetchdf()
-        if df.empty:
-            raise ValueError(f"no feature rows for seasons {seasons}; run `make features`")
+        df = _features(con, seasons)
 
         frames = [out_of_fold(name, df, n_splits=n_splits) for name in names]
         out = pd.concat(frames, ignore_index=True)
@@ -152,6 +213,14 @@ def main() -> None:
         action="store_true",
         help="score the test seasons; Phase 4 only, and only once",
     )
+    parser.add_argument(
+        "--holdout",
+        action="store_true",
+        help="fit on TRAIN_SEASONS and score TEST_SEASONS in one pass, no folds",
+    )
     args = parser.parse_args()
-    out = run(args.seasons, args.models, n_splits=args.folds, allow_test=args.allow_test)
+    if args.holdout:
+        out = holdout(models=args.models)
+    else:
+        out = run(args.seasons, args.models, n_splits=args.folds, allow_test=args.allow_test)
     print(summary(out).to_string(index=False))
