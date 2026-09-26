@@ -10,6 +10,10 @@ coherent as a distribution until normalise_by_lap runs.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import joblib
+import lightgbm as lgb
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
@@ -153,21 +157,82 @@ class LogisticModel:
         return s.reindex(s.abs().sort_values(ascending=False).index)
 
 
+# Shallow and boring on purpose. ~93k rows but only 84 independent races, and
+# the effective sample size is races, not rows: every lap of a race shares one
+# outcome. Depth here buys memorised race shapes, not signal.
+GBM_PARAMS = {
+    "objective": "binary",
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "num_leaves": 15,
+    "max_depth": 4,
+    "min_child_samples": 200,
+    "subsample": 0.8,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+    "verbose": -1,
+}
+
+
 class GBMModel:
-    """LightGBM binary classifier, grouped by race for any CV."""
+    """LightGBM binary classifier, grouped by race for any CV.
+
+    Nulls are handed to LightGBM as nulls rather than imputed: it learns a
+    default direction per split, which is strictly more informative than the
+    median substitution the logistic model needs.
+    """
 
     def __init__(self, **params) -> None:
-        raise NotImplementedError
+        self.params = {**GBM_PARAMS, **params}
+        self.model_: lgb.LGBMClassifier | None = None
+
+    @staticmethod
+    def _frame(df: pd.DataFrame) -> pd.DataFrame:
+        x = design_matrix(df)
+        for col in CATEGORICAL:
+            x[col] = x[col].astype("category")
+        return x
 
     def fit(self, df: pd.DataFrame) -> GBMModel:
-        raise NotImplementedError
+        self.model_ = lgb.LGBMClassifier(**self.params)
+        self.model_.fit(self._frame(df), df[TARGET].astype(int))
+        return self
+
+    def predict_raw(self, df: pd.DataFrame) -> pd.Series:
+        if self.model_ is None:
+            raise RuntimeError("fit() before predict")
+        p = self.model_.predict_proba(self._frame(df))[:, 1]
+        return pd.Series(p, index=df.index, dtype="float64")
 
     def predict_proba(self, df: pd.DataFrame) -> pd.Series:
-        raise NotImplementedError
+        return normalise_by_lap(df.assign(p_raw=self.predict_raw(df)))
+
+    def importances(self) -> pd.Series:
+        """Gain-based importance, largest first.
+
+        Compare the top of this against LogisticModel.coefficients(). A feature
+        the GBM leans on that the linear model gives the opposite sign to means
+        one of them is fitting noise, and that is worth resolving before any
+        number goes in a results table.
+        """
+        if self.model_ is None:
+            raise RuntimeError("fit() before reading importances")
+        booster = self.model_.booster_
+        s = pd.Series(
+            booster.feature_importance(importance_type="gain"),
+            index=booster.feature_name(),
+            dtype="float64",
+        )
+        return (s / s.sum()).sort_values(ascending=False)
 
     def save(self, path) -> None:
-        raise NotImplementedError
+        if self.model_ is None:
+            raise RuntimeError("fit() before save")
+        joblib.dump(self.model_, Path(path))
 
     @classmethod
     def load(cls, path) -> GBMModel:
-        raise NotImplementedError
+        obj = cls()
+        obj.model_ = joblib.load(Path(path))
+        return obj
