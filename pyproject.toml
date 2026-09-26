@@ -11,6 +11,7 @@ dependencies = [
     "numpy>=2.0",
     "scikit-learn>=1.5",
     "lightgbm>=4.5",
+    "joblib>=1.4",
     "tenacity>=9.0",
 ]
 
@@ -24,6 +25,7 @@ fairlap-ingest-openf1 = "fairlap.ingest.openf1:main"
 fairlap-ingest-polymarket = "fairlap.ingest.polymarket:main"
 fairlap-features = "fairlap.transform.build_features:main"
 fairlap-replay = "fairlap.replay.stream_race:main"
+fairlap-predict = "fairlap.model.predict:main"
 fairlap-eval = "fairlap.eval.compare_market:main"
 
 [build-system]

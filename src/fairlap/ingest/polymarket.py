@@ -34,6 +34,7 @@ from fairlap.config import (
     POLYMARKET_F1_TAG_ID,
     POLYMARKET_GAMMA_BASE,
     POLYMARKET_MAX_REQ_PER_SEC,
+    PRERACE_WINDOW_MIN,
     TRADES_PAGE_SIZE,
 )
 from fairlap.ingest import openf1
@@ -611,6 +612,7 @@ def price_series(
     condition_id: str,
     start_ts: int,
     end_ts: int,
+    trade_start_ts: int | None = None,
     refresh: bool = False,
     client: httpx.Client | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -621,8 +623,15 @@ def price_series(
     not anyone traded, `trades` is a print somebody actually filled. Which of
     the two a comparison may use is a `transform`/`eval` decision, and Phase 0
     showed they disagree by a lot.
+
+    `trade_start_ts` reaches back before lights out so the pre-race closing
+    line is stored. Fills are the only series that needs it -- `prices-history`
+    resamples the book and would just manufacture pre-race minutes nobody
+    traded in.
     """
-    trades = fetch_trades(condition_id, start_ts, end_ts, refresh=refresh, client=client)
+    trades = fetch_trades(
+        condition_id, trade_start_ts or start_ts, end_ts, refresh=refresh, client=client
+    )
     history = fetch_prices_history(yes_token_id, start_ts, end_ts, refresh=refresh, client=client)
 
     frames = []
@@ -665,11 +674,13 @@ def ingest(
         with session() as client:
             for n, (_, market) in enumerate(markets.iterrows(), start=1):
                 start_ts, end_ts = openf1.race_window(market)
+                trade_start_ts, _ = openf1.race_window(market, lead_in_min=PRERACE_WINDOW_MIN)
                 prices, trades = price_series(
                     market["yes_token_id"],
                     market["condition_id"],
                     start_ts,
                     end_ts,
+                    trade_start_ts=trade_start_ts,
                     refresh=refresh,
                     client=client,
                 )

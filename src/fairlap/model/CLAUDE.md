@@ -12,6 +12,13 @@ across the drivers still running.
   This is the one that matters. Beating it is the actual claim: that live
   timing data carries information the opening line did not.
 
+  The anchor is `p_market_prerace`: the driver's last fill in the hour before
+  lights out, de-vigged across the grid. Not the lap-1 in-race price, which is
+  already ~90 seconds into the race and subject to the staleness rule — using
+  it meant Baseline B barely existed in 2024, the only market season on the
+  training side. It is still renormalised per lap, so retirements move it; that
+  is the only thing that may.
+
 Report both in every results table. A GBM that beats A and loses to B is a
 result worth writing up, not a failure to hide.
 

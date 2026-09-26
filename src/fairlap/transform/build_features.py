@@ -18,7 +18,9 @@ Feature groups:
   prior          expected_remaining_stops -- a per-circuit stop-count prior fit
                  on the training seasons only, net of stops already made. The
                  most predictive feature and the easiest leak.
-  market         p_market (as-of, de-vigged), market_overround
+  market         p_market (as-of, de-vigged), market_overround,
+                 p_market_prerace -- the de-vigged closing line, constant
+                 across the race
   target         won (0/1)
 
 Known approximation: `total_laps` is taken as the number of laps the race
@@ -40,6 +42,7 @@ from fairlap.config import (
     MARKET_GRID_TOLERANCE_S,
     PACE_WINDOW_LAPS,
     PIT_WINDOW_MIN_LAPS_REMAINING,
+    PRERACE_WINDOW_MIN,
     STALENESS_TOLERANCE_MIN,
     TRAIN_SEASONS,
 )
@@ -388,6 +391,45 @@ def add_market(df: pd.DataFrame, inputs: RaceInputs) -> pd.DataFrame:
     return asof_join_price(out, panel, right_time="ts", tolerance_s=MARKET_GRID_TOLERANCE_S)
 
 
+def add_prerace_market(df: pd.DataFrame, inputs: RaceInputs) -> pd.DataFrame:
+    """The de-vigged closing line: each driver's last fill before lights out.
+
+    One number per driver for the whole race, which is what
+    `FrozenPreRaceBaseline` freezes. Strictly before `race_start`, so it is
+    knowable at lap 1 and survives truncation -- the replay reproduces it at
+    every lap.
+
+    De-vigged across the session rather than within a minute, because the
+    anchors are last-fills at different instants and no single minute holds the
+    whole grid. That is a weaker denominator than the in-race de-vig, which is
+    why the same MIN_DEVIG_DRIVERS and OVERROUND_BAND gates still apply: a
+    pre-race book assembled out of scattered fills can fail them, and when it
+    does the race gets no anchor rather than a normalisation against a field we
+    know is incomplete.
+    """
+    out = df.copy()
+    fills = inputs.market
+    window_start = inputs.race_start - pd.Timedelta(minutes=PRERACE_WINDOW_MIN)
+    pre = fills[(fills["ts"] >= window_start) & (fills["ts"] < inputs.race_start)]
+    if pre.empty:
+        out["p_market_prerace"] = np.nan
+        return out
+
+    anchors = (
+        pre.sort_values("ts")
+        .groupby(["session_key", "driver_number"], as_index=False)
+        .last()[["session_key", "driver_number", "price"]]
+    )
+    # group=("session_key",) collapses fills from scattered minutes into one
+    # book per race. devig's own gates decide whether that book is complete
+    # enough to normalise against.
+    anchors = devig(anchors, group=("session_key",))
+    anchors = anchors[["session_key", "driver_number", "p_market"]].rename(
+        columns={"p_market": "p_market_prerace"}
+    )
+    return out.merge(anchors, on=["session_key", "driver_number"], how="left")
+
+
 def add_target(df: pd.DataFrame, inputs: RaceInputs) -> pd.DataFrame:
     """won = 1 for the race winner on every one of that driver's laps.
 
@@ -418,6 +460,7 @@ def build_race(
     df = add_interruptions(df, inputs)
     df = add_prior(df, inputs, prior, global_prior)
     df = add_market(df, inputs)
+    df = add_prerace_market(df, inputs)
     if with_target:
         df = add_target(df, inputs)
     return df.sort_values(["lap_number", "driver_number"], ignore_index=True)

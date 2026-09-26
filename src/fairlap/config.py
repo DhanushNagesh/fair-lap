@@ -53,6 +53,14 @@ DENSE_COVERAGE_MIN = 0.80
 # minute. This is the same tolerance the as-of join in transform/ will use, so
 # coverage is measured the way the comparison will actually consume it.
 STALENESS_TOLERANCE_MIN = 5
+# The pre-race anchor is the last fill in this many minutes before lights out:
+# the closing line, which is what the frozen baseline freezes. An hour is the
+# window where the market is actively pricing the grid; widening it to a day
+# adds drivers (2025 goes from a median 10 priced markets a race to 20) but
+# those extra quotes are a day stale and calling them "the opening line" would
+# be generous. Trade ingestion fetches this far before the session start.
+PRERACE_WINDOW_MIN = 60
+
 # De-vigging normalises across the field at one timestamp, so a minute needs at
 # least this many above-floor drivers priced simultaneously to be scoreable at
 # all. One lone fresh price cannot be de-vigged against anything.
