@@ -1,4 +1,7 @@
-data/
+# `data/*`, not `data/`: git cannot re-include a file whose parent directory is
+# excluded, so excluding the directory itself would make every `!` line below a
+# no-op and the README would link to files that are not in the repo.
+data/*
 .venv/
 __pycache__/
 *.pyc
