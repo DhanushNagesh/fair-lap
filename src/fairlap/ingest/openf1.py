@@ -113,8 +113,12 @@ def ingest_sessions(seasons: Iterable[int], refresh: bool = False) -> int:
         con.close()
 
 
-def race_window(session: pd.Series) -> tuple[int, int]:
-    """(start_ts, end_ts) unix seconds for a race, from OpenF1 session bounds."""
+def race_window(session: pd.Series, lead_in_min: int = 0) -> tuple[int, int]:
+    """(start_ts, end_ts) unix seconds for a race, from OpenF1 session bounds.
+
+    `lead_in_min` pulls the start back before lights out. Trade ingestion uses
+    it to reach the closing line; the in-race price series does not need it.
+    """
     start = pd.Timestamp(session["date_start"])
     end = pd.Timestamp(session["date_end"])
     if pd.isna(start) or pd.isna(end):
@@ -122,7 +126,7 @@ def race_window(session: pd.Series) -> tuple[int, int]:
     start, end = start.tz_convert("UTC"), end.tz_convert("UTC")
     if end <= start:
         raise ValueError(f"session {session.get('session_key')} has no usable window")
-    return int(start.timestamp()), int(end.timestamp())
+    return int((start - pd.Timedelta(minutes=lead_in_min)).timestamp()), int(end.timestamp())
 
 
 def _align(df: pd.DataFrame, table: str) -> pd.DataFrame:
