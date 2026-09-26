@@ -33,10 +33,10 @@ test:
 	uv run pytest -q
 
 lint:
-	uv run ruff check src tests dashboard
+	uv run ruff check src tests dashboard experiments
 
 fmt:
-	uv run ruff format src tests dashboard
+	uv run ruff format src tests dashboard experiments
 
 clean:
 	rm -rf data/duckdb/fairlap.duckdb
