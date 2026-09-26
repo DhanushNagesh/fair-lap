@@ -20,7 +20,7 @@ predictions instead of ~8.
 | 0 | Market coverage scan | done |
 | 1 | Ingestion (OpenF1 + Polymarket -> DuckDB) | done |
 | 2 | Lap-level feature table | done |
-| 3 | Baselines, logistic, GBM | not started |
+| 3 | Baselines, logistic, GBM | done |
 | 4 | Evaluation vs. market | not started |
 | 5 | Replay + Streamlit dashboard | streamer done, dashboard not started |
 
@@ -70,6 +70,42 @@ deliberately injected leaks — a `direction="nearest"` join, a dropped stalenes
 tolerance, and `expected_remaining_stops` reading the driver's final stop count
 — each fail that test.
 
+**Predictions: 204,432 rows across 4 models** — one per
+`(session_key, lap_number, driver_number, model)` in `predictions`, every lap
+summing to exactly 1 across the drivers still running. "Still running" needs no
+retirement column: the feature table only has a row for a lap a driver
+completed, so the rows present at a lap *are* the surviving field.
+
+| Model | What it knows | Scored rows (2023–24) |
+|---|---|---|
+| `position_rate` | empirical win rate by (position, tenth-of-race) | 51,108 |
+| `frozen_prerace` | de-vigged lap-1 market price, held flat | 1,628 |
+| `logistic` | the full design matrix, linear | 51,108 |
+| `gbm` | the full design matrix, shallow LightGBM | 51,108 |
+
+Every fitted model is scored **out of fold**, `GroupKFold` on `session_key`, so
+no race is ever predicted by a model that saw it. `frozen_prerace` learns
+nothing across races — its anchor is lap-1 data of the race being predicted —
+so it is not folded.
+
+**The test seasons have not been scored.** `fairlap-predict` refuses
+`TEST_SEASONS` unless passed `--allow-test`, which is Phase 4's single final
+evaluation and nothing else.
+
+Two columns are in the feature table but deliberately out of the design matrix.
+`season` is extrapolation across a 2023–24 / 2025–26 split — a linear
+coefficient runs off the end of its range and a tree split on it just memorises
+which years it saw — so the 2026 regulation change is handled by a separate
+2026 breakdown in `eval/`, not by a feature. `stint_number` is `stops_made + 1`
+and correlates with it at 0.98; carrying both split one signal across two
+coefficients with opposite signs (+0.40 / −0.30) and destroyed the only reason
+the linear model is fit at all, which is to sanity-check the GBM's signs.
+Dropping it collapsed `stops_made` to +0.07.
+
+`gap_to_ahead_s` is kept, but read its coefficient knowing OpenF1 reports it as
+exactly 0.00 for P1. It doubles as a leader indicator, which is why it carries
+the largest magnitude in the linear model rather than measuring a gap.
+
 ## Results
 
 Nothing yet. This section gets the paired Brier comparison, the calibration
@@ -83,6 +119,7 @@ make install
 make coverage-scan
 make ingest
 make features
+make predict
 make eval
 make dashboard
 ```
@@ -161,5 +198,6 @@ make dashboard
   report volume, in-window notional is a median 13% of it.
 - **`prices-history` gaps.** Empty responses for some resolved markets
   (Polymarket issue #216). Fallback rebuilds prices from `/trades`, Yes only.
-- **2026 regulations.** Team form shifted. Treated with a season feature and a
-  separate 2026 evaluation.
+- **2026 regulations.** Team form shifted. Handled by a separate 2026
+  breakdown in `eval/`, not by a season feature: with a 2023–24 / 2025–26
+  split, a season term is extrapolation rather than an adjustment.
