@@ -433,3 +433,13 @@ def main() -> None:
         for name, table in tables.items():
             table.to_csv(out_dir / f"eval_{name}.csv", index=False)
         print(f"\nwrote {len(tables)} tables to {out_dir}")
+
+        plot_path = out_dir / "eval_calibration.png"
+        try:
+            calibration.plot_calibration(tables["calibration"], plot_path)
+        except ImportError as exc:
+            # The plot is an optional extra, so a bare install still gets the
+            # numbers. Everything the figure shows is in eval_calibration.csv.
+            print(f"skipped the calibration plot: {exc}")
+        else:
+            print(f"wrote {plot_path}")

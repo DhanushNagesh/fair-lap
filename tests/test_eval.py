@@ -218,3 +218,24 @@ def test_the_headline_names_a_group_and_a_direction():
     line = cm.headline(out, "gbm")
     assert "loses to the market" in line
     assert "CI" in line and "races" in line
+
+
+def test_the_calibration_plot_draws_every_series_with_the_market_first():
+    """The plot is a committed README artefact, so it has to actually render."""
+    pytest.importorskip("matplotlib")
+    df = cm.paired_frame(paired_fixture(), MODELS)
+    table = calibration.calibration_table(df, ["p_market", "p_gbm"], n_bins=4)
+    fig = calibration.plot_calibration(table)
+    full, zoomed = fig.axes
+    assert full.get_xlim() == (0.0, 1.0)
+    assert zoomed.get_xlim() == (0.0, calibration.ZOOM_MAX)
+
+    # One line per series plus the diagonal, market first and in black.
+    labels = [line.get_label() for line in full.get_lines()]
+    assert labels[1:] == ["market (de-vigged)", "GBM"]
+    assert full.get_lines()[1].get_color() == "black"
+
+
+def test_series_order_puts_unknown_columns_last():
+    table = pd.DataFrame({"pred": ["p_zzz", "p_gbm", "p_market"], "bin": [0, 0, 0]})
+    assert calibration._series_order(table) == ["p_market", "p_gbm", "p_zzz"]

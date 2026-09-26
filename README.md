@@ -268,12 +268,26 @@ equal-width bins leave the top bucket with single digits of rows.
 | baseline A | 0.0305 |
 | baseline B | 0.0280 |
 
-The curves say *how* the GBM is worse rather than only that it is. The market's
-bottom eight deciles contain **zero** winners across ~10,000 rows: when it
-writes a driver off, that driver does not win. The GBM's bottom deciles observe
-0.2–5.4% win rates against predictions of 0.01–2%, so it writes off drivers it
-should not, and it is simultaneously overconfident at the top (top decile
-predicts 0.931, observes 0.866). Sharpness in the wrong places.
+![Calibration of every forecaster against the diagonal, full range and low-probability region](data/eval_calibration.png)
+
+Two panels because one cannot show this: eight of the ten bins sit below 0.15,
+so on a full axis the interesting part collapses onto the origin. The right
+panel is where the result lives.
+
+The curves say *how* the GBM is worse rather than only that it is. **The
+market is the only forecaster that stays at or below the diagonal down there.**
+Its bottom five deciles — 6,344 rows — contain **zero** winners: when the
+market writes a driver off, that driver does not win, ever, in this sample. The
+GBM and baseline A sit well above the diagonal over the same range, observing
+2.8–6.1% win rates where they predicted 0.1–2%. They write off drivers they
+should not.
+
+At the other end the GBM is overconfident — top decile predicts 0.931 and
+observes 0.866, while the market predicts 0.879 and observes 0.956, erring the
+safe way. Sharpness in the wrong places, at both ends.
+
+Regenerate the figure and the underlying bins with `make eval`
+([`data/eval_calibration.csv`](data/eval_calibration.csv)).
 
 ### Betting backtest — a sanity check, and it disagrees
 
