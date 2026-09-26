@@ -337,3 +337,71 @@ def test_replay_matches_full_build_on_a_real_race(session_key):
     replayed = _indexed(pd.concat(rebuilt, ignore_index=True))
     assert full.index.equals(replayed.index)
     assert not _differences(full, replayed)
+
+
+def test_the_bootstrap_resamples_whole_races():
+    """Rule 6: a resample draws races, never rows.
+
+    Checked by having the statistic report what it was handed: every race in a
+    resample must appear with its full lap count (or a multiple of it, when the
+    same race is drawn twice). A row-level bootstrap fails this immediately.
+    """
+    from fairlap.eval.metrics import bootstrap_ci
+
+    df = pd.DataFrame(
+        {
+            "session_key": [1] * 5 + [2] * 3 + [3] * 7,
+            "won": [0] * 15,
+        }
+    )
+    sizes = {1: 5, 2: 3, 3: 7}
+    seen = []
+
+    def stat(part):
+        counts = part["session_key"].value_counts()
+        seen.append({int(k): int(v) for k, v in counts.items()})
+        return float(len(part))
+
+    bootstrap_ci(df, stat, n_boot=50, seed=1)
+    assert seen
+    for counts in seen:
+        assert sum(counts.values()) == sum(sizes[k] * (v // sizes[k]) for k, v in counts.items())
+        for key, n in counts.items():
+            assert n % sizes[key] == 0, f"race {key} was split: {n} rows"
+
+
+def test_a_row_bootstrap_would_have_manufactured_significance():
+    """Rule 6, stated as the failure it prevents.
+
+    Three races that are internally unanimous and disagree with each other.
+    The race-clustered interval has to be wide enough to admit that three
+    observations say very little; a row-level interval on the same 150 rows
+    reports a tenth of the width and would call this significant.
+    """
+    from fairlap.eval.metrics import bootstrap_ci
+
+    df = pd.DataFrame(
+        {
+            "session_key": [1] * 50 + [2] * 50 + [3] * 50,
+            "won": [0.0] * 100 + [1.0] * 50,
+            "row_id": range(150),
+        }
+    )
+
+    def mean_won(part):
+        return float(part["won"].mean())
+
+    clustered = bootstrap_ci(df, mean_won, n_boot=2_000, seed=0)
+    by_row = bootstrap_ci(df, mean_won, n_boot=2_000, cluster="row_id", seed=0)
+    # Clustered: 0 to 1, because three races can all come up the same way.
+    # Row-level: about 0.26 to 0.41, a seventh of the width, from the same data.
+    assert clustered == (0.0, 1.0)
+    assert (clustered[1] - clustered[0]) > 5 * (by_row[1] - by_row[0])
+
+
+def test_the_holdout_pass_refuses_an_overlapping_split():
+    """Rule 3 at the point where the test seasons are finally scored."""
+    from fairlap.model.predict import holdout
+
+    with pytest.raises(ValueError, match="both halves"):
+        holdout(train_seasons=(2023, 2025), test_seasons=(2025, 2026))

@@ -21,12 +21,25 @@ predictions instead of ~8.
 | 1 | Ingestion (OpenF1 + Polymarket -> DuckDB) | done |
 | 2 | Lap-level feature table | done |
 | 3 | Baselines, logistic, GBM | done |
-| 4 | Evaluation vs. market | not started |
+| 4 | Evaluation vs. market | done — **the market wins**, see [Results](#results) |
 | 5 | Replay + Streamlit dashboard | streamer done, dashboard not started |
 
 **Eval set size: 48 usable races, 15,486 scored `(race, lap, driver)` rows** —
 out of 49 races that have a Polymarket winner market and 96 race sessions since
-2023.
+2023. The **headline comparison uses 36 of those races and 12,688 rows**, and
+the difference is not a discrepancy: 10 usable races (2,185 rows) are in 2024,
+a *training* season, so a model fitted on them cannot be scored against the
+market there. That leaves 38 races and 13,301 rows, and requiring all four
+forecasters to have an opinion on identical rows costs a further 613 — baseline
+B has no pre-race anchor for a handful of drivers — which empties two 2026
+races entirely.
+
+| | races | rows |
+|---|---|---|
+| usable (has a market, at least one scoreable lap) | 48 | 15,486 |
+| − 2024, a training season | −10 | −2,185 |
+| − rows some forecaster cannot price | −2 | −613 |
+| **scored in the headline comparison** | **36** | **12,688** |
 
 Two row counts appear on this page and they are in **different units**, so they
 are not meant to agree:
@@ -148,9 +161,12 @@ closing line took 2024 from 1,628 anchored rows to 3,432, 2025 from 12,052 to
 14,214 and 2026 from 5,952 to 6,549 — 2024 is the one that mattered, since it
 is the only market season in the training half.
 
-**The test seasons have not been scored.** `fairlap-predict` refuses
-`TEST_SEASONS` unless passed `--allow-test`, which is Phase 4's single final
-evaluation and nothing else.
+**The test seasons were scored once**, by `make predict-test`, which fits each
+model on all of 2023–24 and applies it to 2025–26 in a single pass with no
+folds (`fold = -2` in the `predictions` table, to keep those rows from ever
+being pooled with Phase 3's out-of-fold training-season rows). `fairlap-predict`
+still refuses `TEST_SEASONS` in its ordinary out-of-fold mode without
+`--allow-test`.
 
 Two columns are in the feature table but deliberately out of the design matrix.
 `season` is extrapolation across a 2023–24 / 2025–26 split — a linear
@@ -168,9 +184,141 @@ the largest magnitude in the linear model rather than measuring a gap.
 
 ## Results
 
-Nothing yet. This section gets the paired Brier comparison, the calibration
-plot, and the sentence "the model beats / loses to the market in ___,
-because ___."
+**The market wins.** Over 12,688 scored `(race, lap, driver)` rows from 36
+races of the held-out 2025–26 seasons (the arithmetic from 48 usable races is
+in [Status](#status)), Polymarket's in-race price is better
+calibrated than every model here, and the gap is larger than the
+race-clustered confidence interval.
+
+The model is fitted once on 2023–24 and applied once to 2025–26
+(`make predict-test`). Reproduce the whole table with `make eval`; it is
+committed under [`data/eval_*.csv`](data/).
+
+| | Brier | log loss | vs. market | 95% CI (races resampled) | |
+|---|---|---|---|---|---|
+| **market** (de-vigged) | **0.0420** | **0.1441** | — | — | |
+| GBM | 0.0651 | 0.2274 | +0.0231 | +0.0102 to +0.0354 | market wins |
+| logistic | 0.0717 | 0.2498 | +0.0297 | +0.0192 to +0.0406 | market wins |
+| baseline A (position rate) | 0.0745 | 0.2543 | +0.0325 | +0.0201 to +0.0444 | market wins |
+| baseline B (frozen closing line) | 0.0898 | 0.2830 | +0.0478 | +0.0331 to +0.0612 | market wins |
+
+Lower is better, so a positive difference is the model losing. The GBM does
+beat both baselines, including the frozen pre-race line — live timing data
+*does* add information the closing line did not have. It just adds less than
+the live market already has.
+
+### Where each side wins
+
+| Breakdown | Group | rows | races | GBM − market Brier | 95% CI | Verdict |
+|---|---|---|---|---|---|---|
+| phase | opening (laps 1–10) | 2,668 | 35 | −0.0022 | −0.0178 to +0.0163 | tie |
+| phase | middle | 8,499 | 36 | +0.0324 | +0.0160 to +0.0505 | **market** |
+| phase | closing (final 10) | 1,521 | 34 | +0.0160 | −0.0025 to +0.0366 | tie |
+| condition | green | 11,533 | 36 | +0.0208 | +0.0066 to +0.0360 | **market** |
+| condition | SC / VSC / red | 1,155 | 29 | +0.0471 | −0.0078 to +0.0965 | tie |
+| season | 2025 | 8,156 | 24 | +0.0245 | +0.0072 to +0.0469 | **market** |
+| season | 2026 | 4,532 | 12 | +0.0208 | −0.0062 to +0.0546 | tie |
+
+The entire measurable deficit sits in the **middle phase under green flags**.
+In the opening ten laps the two are indistinguishable, and the GBM's point
+estimate is marginally ahead — unsurprising, since both sides are mostly
+reading the grid. Under safety cars and in 2026 the interval is too wide to
+call, which is a statement about sample size (1,155 rows over 29 races; 12
+races) rather than a tie on the merits.
+
+### The filled sentence
+
+> The model **loses to the market in the middle phase of a green-flag race**
+> (Brier 0.0737 vs 0.0414, difference +0.0324, 95% race-clustered CI +0.0160 to
+> +0.0505, over 8,499 rows in 36 races), **because its information is track
+> position and the market's includes strategic intent.** The deficit is not a
+> uniform handicap — the GBM is actually ahead in 15 of 36 races and the median
+> per-race difference is +0.003 — it is a tail of races where the car in front
+> is not the car about to win.
+
+The mechanism, as a diagnostic rather than a headline: splitting the scored
+rows on whether the eventual winner was *already leading* that lap gives
+Brier 0.0094 vs the market's 0.0231 when they were (8,697 rows, CI −0.0213 to
+−0.0075, model wins), against 0.1877 vs 0.0840 when they were not (3,991 rows,
+CI +0.069 to +0.145). On laps where the running order already matches the
+finishing order the model is the better forecaster; on laps where it does not,
+it puts 0.17 on the eventual winner while the market puts 0.48.
+
+**That split conditions on the outcome, so it can only ever explain a result
+and never be one** — a model built from track position is close to guaranteed
+to look good on one side of it. It is reported because it names the missing
+feature: `expected_remaining_stops` is a per-circuit prior, not this driver's
+actual pit plan, and `pace_roll_s` is a raw lap time that does not separate
+traffic from fuel load from tyre age. The market prices the undercut that is
+halfway through happening; the feature table cannot see it. The five worst
+races are exactly that shape — Monza 2026 won from P19, Jeddah 2025, Lusail
+2025, Silverstone 2025 — while the races the model wins are the lights-to-flag
+ones.
+
+### Calibration
+
+Quantile bins, ten of them, because win probabilities pile up near zero and
+equal-width bins leave the top bucket with single digits of rows.
+
+| | expected calibration error |
+|---|---|
+| market | 0.0172 |
+| GBM | 0.0244 |
+| logistic | 0.0209 |
+| baseline A | 0.0305 |
+| baseline B | 0.0280 |
+
+![Calibration of every forecaster against the diagonal, full range and low-probability region](data/eval_calibration.png)
+
+Two panels because one cannot show this: eight of the ten bins sit below 0.15,
+so on a full axis the interesting part collapses onto the origin. The right
+panel is where the result lives.
+
+The curves say *how* the GBM is worse rather than only that it is. **The
+market is the only forecaster that stays at or below the diagonal down there.**
+Its bottom five deciles — 6,344 rows — contain **zero** winners: when the
+market writes a driver off, that driver does not win, ever, in this sample. The
+GBM and baseline A sit well above the diagonal over the same range, observing
+2.8–6.1% win rates where they predicted 0.1–2%. They write off drivers they
+should not.
+
+At the other end the GBM is overconfident — top decile predicts 0.931 and
+observes 0.866, while the market predicts 0.879 and observes 0.956, erring the
+safe way. Sharpness in the wrong places, at both ends.
+
+Regenerate the figure and the underlying bins with `make eval`
+([`data/eval_calibration.csv`](data/eval_calibration.csv)).
+
+### Betting backtest — a sanity check, and it disagrees
+
+| | bets | races | staked | PnL | ROI | 95% CI |
+|---|---|---|---|---|---|---|
+| all | 5,075 | 36 | 2,663.81 | +257.19 | +9.7% | +1.9% to +17.1% |
+| 2025 | 3,198 | 24 | 1,704.92 | +170.08 | +10.0% | +2.9% to +15.8% |
+| 2026 | 1,877 | 12 | 958.88 | +87.12 | +9.1% | −7.5% to +28.1% |
+
+Flat one-unit stakes on every row where the GBM disagrees with the de-vigged
+price by more than 3 points, transacted at the **quoted** price
+(`p_market × overround`) plus a 1-point assumed spread — not at the de-vigged
+probability, which would be betting at better-than-market odds, since
+de-vigging is exactly the step that removes the house edge.
+
+**The Brier result is the result and this is not.** A strategy that makes money
+while losing on calibration is the case `eval/CLAUDE.md` warns about, and the
+honest reading is that the backtest got lucky: 5,075 bets across 36 races are
+nothing like 5,075 independent observations (dozens of bets on one race are one
+bet on that race), the depth assumption is that any size fills at the touch,
+and a real book would have moved. The 2026 interval already straddles zero on a
+third of the sample. Treat the sign as a curiosity, not a finding.
+
+### What would have to change for the model to win
+
+Nothing in this repo, and that is the point of reporting it this way. The gap
+is a missing-information problem, not a tuning problem: it needs per-driver pit
+intent (team radio, live strategy calls) or a pace model that separates clean
+air from traffic. Both are outside what OpenF1's free tier publishes. Tuning
+the GBM harder against a held-out set that has now been looked at once would
+buy a better number and a worse project.
 
 ## Quickstart
 
