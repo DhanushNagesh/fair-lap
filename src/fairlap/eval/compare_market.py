@@ -403,7 +403,9 @@ def main() -> None:
 
     _section(
         "calibration error",
-        calibration.expected_calibration_error(tables["calibration"]).to_frame("ece"),
+        # reset_index: _section prints without the index, and the forecaster
+        # names live there. Without it the ECE column is unlabelled.
+        calibration.expected_calibration_error(tables["calibration"]).to_frame("ece").reset_index(),
     )
 
     _section(
