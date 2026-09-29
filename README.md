@@ -1,5 +1,7 @@
 # Fair Lap
 
+[![CI](https://github.com/DhanushNagesh/fair-lap/actions/workflows/ci.yml/badge.svg)](https://github.com/DhanushNagesh/fair-lap/actions/workflows/ci.yml)
+
 A lap-by-lap F1 win probability model built from live timing data, tested
 against Polymarket's in-race betting odds to see which one is better calibrated.
 
