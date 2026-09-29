@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          # Same version the hosted dashboard runs on.
+          python-version: "3.12"
+      - run: uv sync --all-extras --locked
+      - run: uv run ruff check src tests dashboard experiments
+      - run: uv run ruff format --check src tests dashboard experiments
+      # -rs prints why each test was skipped. The full DuckDB file is gitignored,
+      # so the real-race leakage checks skip here and only run locally.
+      - run: uv run pytest -q -rs
