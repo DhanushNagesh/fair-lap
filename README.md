@@ -3,6 +3,8 @@
 A lap-by-lap F1 win probability model built from live timing data, tested
 against Polymarket's in-race betting odds to see which one is better calibrated.
 
+**[Live dashboard](https://fair-lap.streamlit.app/)**: replay any 2025-26 race lap by lap, model vs market.
+
 ![Model vs market win probability over the 2025 British GP](data/race_9947.png)
 
 *2025 British GP. Solid lines are the model, dashed lines are the de-vigged
