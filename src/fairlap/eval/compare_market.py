@@ -403,7 +403,9 @@ def main() -> None:
 
     _section(
         "calibration error",
-        calibration.expected_calibration_error(tables["calibration"]).to_frame("ece"),
+        # reset_index: _section prints without the index, and the forecaster
+        # names live there. Without it the ECE column is unlabelled.
+        calibration.expected_calibration_error(tables["calibration"]).to_frame("ece").reset_index(),
     )
 
     _section(
@@ -424,6 +426,18 @@ def main() -> None:
 
     print("\n" + headline(tables["by_phase"]))
     print(headline(tables["overall"], group_col="model").replace(" in gbm", " overall"))
+
+    # The dashboard reads these rather than recomputing them: the bootstrap is
+    # the slow part, and a second computation path is a second chance to
+    # disagree with the README.
+    con = db.connect()
+    try:
+        for name, table in tables.items():
+            con.register("_eval_table", table)
+            con.execute(f"CREATE OR REPLACE TABLE eval_{name} AS SELECT * FROM _eval_table")
+            con.unregister("_eval_table")
+    finally:
+        con.close()
 
     if args.out:
         from pathlib import Path

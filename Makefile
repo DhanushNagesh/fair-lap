@@ -13,8 +13,9 @@ ingest:
 features: ingest
 	uv run fairlap-features
 
+MODEL ?= gbm
 replay:
-	uv run fairlap-replay --session-key $(SESSION_KEY)
+	uv run fairlap-replay --session-key $(SESSION_KEY) --model $(MODEL) $(if $(SPEED),--speed $(SPEED))
 
 predict:
 	uv run fairlap-predict

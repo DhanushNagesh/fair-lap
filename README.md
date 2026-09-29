@@ -22,7 +22,7 @@ predictions instead of ~8.
 | 2 | Lap-level feature table | done |
 | 3 | Baselines, logistic, GBM | done |
 | 4 | Evaluation vs. market | done — **the market wins**, see [Results](#results) |
-| 5 | Replay + Streamlit dashboard | streamer done, dashboard not started |
+| 5 | Replay + Streamlit dashboard | done, see [Replay and dashboard](#replay-and-dashboard) |
 
 **Eval set size: 48 usable races, 15,486 scored `(race, lap, driver)` rows** —
 out of 49 races that have a Polymarket winner market and 96 race sessions since
@@ -186,8 +186,8 @@ the largest magnitude in the linear model rather than measuring a gap.
 
 **The market wins.** Over 12,688 scored `(race, lap, driver)` rows from 36
 races of the held-out 2025–26 seasons (the arithmetic from 48 usable races is
-in [Status](#status)), Polymarket's in-race price is better
-calibrated than every model here, and the gap is larger than the
+in [Status](#status)), Polymarket's in-race price scores better than every
+model here on Brier and log loss, and the gap is larger than the
 race-clustered confidence interval.
 
 The model is fitted once on 2023–24 and applied once to 2025–26
@@ -196,28 +196,36 @@ committed under [`data/eval_*.csv`](data/).
 
 | | Brier | log loss | vs. market | 95% CI (races resampled) | |
 |---|---|---|---|---|---|
-| **market** (de-vigged) | **0.0420** | **0.1441** | — | — | |
-| GBM | 0.0651 | 0.2274 | +0.0231 | +0.0102 to +0.0354 | market wins |
-| logistic | 0.0717 | 0.2498 | +0.0297 | +0.0192 to +0.0406 | market wins |
-| baseline A (position rate) | 0.0745 | 0.2543 | +0.0325 | +0.0201 to +0.0444 | market wins |
-| baseline B (frozen closing line) | 0.0898 | 0.2830 | +0.0478 | +0.0331 to +0.0612 | market wins |
+| **market** (de-vigged) | **0.0423** | **0.1499** | — | — | |
+| GBM | 0.0654 | 0.2335 | +0.0232 | +0.0076 to +0.0401 | market wins |
+| logistic | 0.0717 | 0.2569 | +0.0294 | +0.0174 to +0.0424 | market wins |
+| baseline A (position rate) | 0.0754 | 0.2617 | +0.0331 | +0.0182 to +0.0490 | market wins |
+| baseline B (frozen closing line) | 0.0893 | 0.2874 | +0.0471 | +0.0323 to +0.0632 | market wins |
 
 Lower is better, so a positive difference is the model losing. The GBM does
 beat both baselines, including the frozen pre-race line — live timing data
 *does* add information the closing line did not have. It just adds less than
 the live market already has.
 
+Every probability in this table is renormalised so each lap sums to 1 over the
+rows that are scored, market and model alike — the market is de-vigged across
+the drivers who are priced and the model across the drivers who are running,
+and scoring that difference would flatter the market. `make eval` also prints
+the comparison without that step as a sanity check (GBM 0.0651 vs market
+0.0420, CI +0.0102 to +0.0354); an earlier version of this table quoted those
+numbers by mistake. Every verdict is the same either way.
+
 ### Where each side wins
 
 | Breakdown | Group | rows | races | GBM − market Brier | 95% CI | Verdict |
 |---|---|---|---|---|---|---|
-| phase | opening (laps 1–10) | 2,668 | 35 | −0.0022 | −0.0178 to +0.0163 | tie |
-| phase | middle | 8,499 | 36 | +0.0324 | +0.0160 to +0.0505 | **market** |
-| phase | closing (final 10) | 1,521 | 34 | +0.0160 | −0.0025 to +0.0366 | tie |
-| condition | green | 11,533 | 36 | +0.0208 | +0.0066 to +0.0360 | **market** |
-| condition | SC / VSC / red | 1,155 | 29 | +0.0471 | −0.0078 to +0.0965 | tie |
-| season | 2025 | 8,156 | 24 | +0.0245 | +0.0072 to +0.0469 | **market** |
-| season | 2026 | 4,532 | 12 | +0.0208 | −0.0062 to +0.0546 | tie |
+| phase | opening (laps 1–10) | 2,668 | 35 | −0.0022 | −0.0175 to +0.0144 | tie |
+| phase | middle | 8,499 | 36 | +0.0324 | +0.0145 to +0.0531 | **market** |
+| phase | closing (final 10) | 1,521 | 34 | +0.0160 | −0.0045 to +0.0381 | tie |
+| condition | green | 11,533 | 36 | +0.0208 | +0.0054 to +0.0374 | **market** |
+| condition | SC / VSC / red | 1,155 | 29 | +0.0471 | −0.0072 to +0.0940 | tie |
+| season | 2025 | 8,156 | 24 | +0.0245 | +0.0061 to +0.0460 | **market** |
+| season | 2026 | 4,532 | 12 | +0.0208 | −0.0063 to +0.0516 | tie |
 
 The entire measurable deficit sits in the **middle phase under green flags**.
 In the opening ten laps the two are indistinguishable, and the GBM's point
@@ -229,8 +237,8 @@ races) rather than a tie on the merits.
 ### The filled sentence
 
 > The model **loses to the market in the middle phase of a green-flag race**
-> (Brier 0.0737 vs 0.0414, difference +0.0324, 95% race-clustered CI +0.0160 to
-> +0.0505, over 8,499 rows in 36 races), **because it writes off drivers who go
+> (Brier 0.0737 vs 0.0414, difference +0.0324, 95% race-clustered CI +0.0145 to
+> +0.0531, over 8,499 rows in 36 races), **because it writes off drivers who go
 > on to win and the market does not.** The deficit is not a uniform handicap —
 > the GBM is actually ahead in 15 of 36 races and the median per-race
 > difference is +0.003 — it is a tail of races where the car in front is not
@@ -350,7 +358,7 @@ leaks the held-out races' outcomes into the feature.
 Three measurements now point the same way. Pit intent: bounded at ~10% of the
 gap, CI straddling zero. Identity: actively harmful. And baseline B — which is
 precisely identity-as-a-frozen-prior, the de-vigged closing line held constant
-— is the worst forecaster in the results table at 0.0898.
+— is the worst forecaster in the results table at 0.0893.
 
 So the market's edge may not be a **feature** this model is missing. It may be
 that the market holds a strong prior *and moves off it* when live state
@@ -370,11 +378,21 @@ equal-width bins leave the top bucket with single digits of rows.
 
 | | expected calibration error |
 |---|---|
-| market | 0.0172 |
+| market | 0.0209 |
 | GBM | 0.0244 |
-| logistic | 0.0209 |
+| logistic | **0.0172** |
 | baseline A | 0.0305 |
 | baseline B | 0.0280 |
+
+**The logistic model has the lowest calibration error, not the market.** An
+earlier version of this table had the two swapped: `make eval` printed the ECE
+column without forecaster names, and the rows were read in the wrong order. It
+does not change the headline, which is scored on Brier, and ECE is a weak
+summary here: it is a row-weighted average of |observed − predicted| that
+hides which direction a forecaster errs in, and direction is the finding
+below. The logistic model is close to the diagonal on average by being
+unsharp — its top decile predicts 0.817 against the market's 0.879 — and Brier,
+which rewards sharpness as well as calibration, still ranks it third.
 
 ![Calibration of every forecaster against the diagonal, full range and low-probability region](data/eval_calibration.png)
 
@@ -383,8 +401,9 @@ so on a full axis the interesting part collapses onto the origin. The right
 panel is where the result lives.
 
 The curves say *how* the GBM is worse rather than only that it is. **The
-market is the only forecaster that stays at or below the diagonal down there.**
-Its bottom five deciles — 6,344 rows — contain **zero** winners: when the
+market stays at or below the diagonal down there, and so, mostly, does baseline
+B — which is the market's own pre-race opinion. Every fitted model sits
+above it.** The market's bottom five deciles — 6,344 rows — contain **zero** winners: when the
 market writes a driver off, that driver does not win, ever, in this sample. The
 GBM and baseline A sit well above the diagonal over the same range, observing
 2.8–6.1% win rates where they predicted 0.1–2%. They write off drivers they
@@ -436,6 +455,33 @@ Neither is free: the held-out seasons have been looked at once, so another
 feature round makes the 2025–26 Brier one pass of hindsight deep. Tuning the
 GBM harder against that set would buy a better number and a worse project.
 
+## Replay and dashboard
+
+`make replay SESSION_KEY=...` re-runs a finished race one lap at a time. At
+lap *t* it rebuilds every feature from history truncated at the end of lap *t*
+— the same functions the feature table runs — and asks a fitted model for the
+field's win probabilities. The model is fitted on 2023–24 with the replayed
+race left out, so a training-season race is replayed leave-one-race-out and a
+test-season race gets exactly the holdout fit. `tests/test_replay.py` checks
+that: replaying Melbourne 2025 reproduces the 928 scored holdout predictions
+with a maximum difference of 0.0.
+
+Output goes to `replay_predictions`, not `predictions`. The two share a key,
+and the second table holds the rows the Results section is scored on; a
+replay writing there would overwrite them. It is written in one upsert at the
+end rather than lap by lap, because DuckDB allows one writer *or* many
+readers on a file, and a replay holding the write lock would lock the
+dashboard out. `SPEED=0.5` paces the console; the dashboard has its own
+play button over the stored laps.
+
+`make dashboard` is read-only and computes no statistic of its own. It reads
+`replay_predictions` for the race view and the `eval_*` tables `make eval`
+writes into DuckDB alongside the CSVs, so its calibration chart and breakdown
+table are the ones above, from the same rows. Four tabs: model-vs-market lines
+over laps with SC/VSC/red-flag laps shaded and gaps where the market had no
+fresh fill; the calibration curves; the breakdown table with race-clustered
+CIs; and per-race coverage.
+
 ## Quickstart
 
 ```
@@ -445,6 +491,7 @@ make ingest
 make features
 make predict
 make eval
+make replay SESSION_KEY=9693
 make dashboard
 ```
 
