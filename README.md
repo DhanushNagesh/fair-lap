@@ -39,9 +39,35 @@ seasons. I tested the two obvious explanations for the mid-race gap, pit stop
 timing and driver/team identity, and neither one holds up
 ([details below](#what-doesnt-explain-the-gap)).
 
-- [How the eval set was constructed and what it excludes](docs/methodology.md)
-- The leakage rules are enforced as tests in
-  [`tests/test_leakage.py`](tests/test_leakage.py)
+[How the eval set was constructed and what it excludes](docs/methodology.md)
+
+## Why the comparison is trustworthy
+
+A win probability model is easy to make look good by accident. The usual ways
+are a feature that peeks at the future (the finishing position, how many stops
+a driver ends up making), a random row split so laps from the same race land in
+train and test, or a market price joined from slightly after the lap. So I
+wrote the rules down before building anything, and each one is a test that
+runs on every push.
+
+| Rule | Enforced by |
+|---|---|
+| 1. A feature at lap *t* only uses data timestamped at or before the end of lap *t* | [`test_replay_matches_full_build`](tests/test_leakage.py), which rebuilds every lap from history cut off at that lap and requires identical features |
+| 2. No features from hindsight: final classification, total pit count, or a stint length only known after the fact | `test_the_replay_never_sees_the_target`, `test_expected_remaining_stops_ignores_actual_future_stops`, `test_the_stint_end_lap_is_never_loaded` |
+| 3. Train/test splits are by race, never by row | `test_train_test_split_never_shares_a_race`, `test_the_holdout_pass_refuses_an_overlapping_split` |
+| 4. The market price at lap *t* comes from a strictly backward join with a staleness limit, never nearest or forward-filled | `test_market_join_is_strictly_backward`, `test_a_nearest_join_would_have_leaked`, `test_stale_price_beyond_tolerance_is_null` |
+| 5. Prices are de-vigged before any comparison, and both sides are renormalised over the same drivers | the de-vig tests in [`test_asof.py`](tests/test_asof.py), `test_paired_frame_puts_model_and_market_on_the_same_support` |
+| 6. Bootstrap CIs resample whole races, not rows | `test_the_bootstrap_resamples_whole_races`, `test_a_row_bootstrap_would_have_manufactured_significance` |
+
+The rule 1 test is the one I trust most because it doesn't depend on me
+thinking of a specific leak. I checked it by adding three leaks on purpose (a
+nearest-in-time market join, no staleness limit, and a stop count that reads
+the driver's final number of stops) and it failed on each one.
+
+One gap: the full database is gitignored, so CI runs these on small hand-built
+races. The same rule 1 check on three real races, and the check that the
+replay reproduces the scored predictions, only run locally (7 tests skip in CI,
+and `pytest -rs` lists them).
 
 ## Setup
 
