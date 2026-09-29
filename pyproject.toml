@@ -2,6 +2,7 @@
 name = "fairlap"
 version = "0.1.0"
 description = "Lap-by-lap F1 win-probability model benchmarked against Polymarket in-race odds"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "duckdb>=1.1",
