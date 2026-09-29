@@ -28,3 +28,8 @@ build/
 
 # The hosted dashboard reads this, from `make dashboard-db`.
 !data/dashboard.duckdb
+
+# Assistant instructions and local tool config stay on this machine.
+CLAUDE.md
+AGENTS.md
+.claude/
