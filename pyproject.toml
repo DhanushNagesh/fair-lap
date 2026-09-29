@@ -28,6 +28,7 @@ fairlap-features = "fairlap.transform.build_features:main"
 fairlap-replay = "fairlap.replay.stream_race:main"
 fairlap-predict = "fairlap.model.predict:main"
 fairlap-eval = "fairlap.eval.compare_market:main"
+fairlap-dashboard-db = "fairlap.dashboard_db:main"
 
 [build-system]
 requires = ["hatchling"]

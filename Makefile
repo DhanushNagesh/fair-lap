@@ -1,4 +1,4 @@
-.PHONY: install coverage-scan ingest features replay predict predict-test eval dashboard test lint fmt clean
+.PHONY: install coverage-scan ingest features replay predict predict-test eval race-chart dashboard-db dashboard test lint fmt clean
 
 install:
 	uv sync --all-extras
@@ -26,6 +26,14 @@ predict-test:
 
 eval: predict-test
 	uv run fairlap-eval --backtest --out data
+
+CHART_KEY = $(or $(SESSION_KEY),9947)
+race-chart:
+	uv run python -m fairlap.eval.race_chart --session-key $(CHART_KEY) --out data/race_$(CHART_KEY).png
+
+# Replays every held-out race, then writes the small DB the hosted dashboard uses.
+dashboard-db:
+	uv run fairlap-dashboard-db
 
 dashboard:
 	uv run streamlit run dashboard/app.py

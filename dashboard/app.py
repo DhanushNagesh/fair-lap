@@ -11,14 +11,25 @@ app would make `make replay` and `make eval` fail while the dashboard is up.
 
 from __future__ import annotations
 
+import sys
 import time
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
-from fairlap import db
-from fairlap.eval.calibration import expected_calibration_error
+# Streamlit Community Cloud installs dashboard/requirements.txt and not the
+# package itself, so src/ goes on the path by hand. A no-op locally under uv.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from fairlap import db  # noqa: E402
+from fairlap.config import DASHBOARD_DB_PATH, DUCKDB_PATH, FEATURED_SESSION_KEY  # noqa: E402
+from fairlap.eval.calibration import expected_calibration_error  # noqa: E402
+
+# The full database when it exists, otherwise the committed snapshot from
+# `make dashboard-db`. A fresh clone and the hosted app only have the snapshot.
+DB_PATH = DUCKDB_PATH if DUCKDB_PATH.exists() else DASHBOARD_DB_PATH
 
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
 MODEL_LABELS = {
@@ -33,7 +44,7 @@ ZOOM_MAX = 0.15
 
 @st.cache_data(show_spinner=False)
 def query(sql: str, params: tuple = ()) -> pd.DataFrame:
-    con = db.connect(read_only=True)
+    con = db.connect(DB_PATH, read_only=True)
     try:
         return con.execute(sql, list(params)).fetchdf()
     finally:
@@ -107,12 +118,16 @@ def win_prob_chart(
 
     x = alt.X("lap_number:Q", title="lap", scale=alt.Scale(domain=[1, total_laps]))
     color = alt.Color(
-        "driver:N", scale=alt.Scale(domain=drivers, range=SERIES[: len(drivers)]), title="driver"
+        "driver:N",
+        scale=alt.Scale(domain=drivers, range=SERIES[: len(drivers)]),
+        title="driver",
+        legend=alt.Legend(orient="bottom"),
     )
     dash = alt.StrokeDash(
         "source:N",
         scale=alt.Scale(domain=["model", "market"], range=[[1, 0], [5, 3]]),
         title="source",
+        legend=alt.Legend(orient="bottom"),
     )
     # A gap in a market line is a lap with no fresh fill. It is drawn as a gap
     # on purpose: joining across it would draw a price nobody traded.
@@ -187,7 +202,12 @@ def calibration_chart(table: pd.DataFrame, hi: float) -> alt.Chart:
             ),
             y=alt.Y("observed:Q", title="observed win rate", scale=alt.Scale(domain=[0, hi])),
             color=alt.Color(
-                "label:N", scale=alt.Scale(domain=order, range=colors), title="forecaster"
+                "label:N",
+                scale=alt.Scale(domain=order, range=colors),
+                title="forecaster",
+                # Below the plot: in a narrow column a side legend takes the
+                # whole width and the plot area collapses to nothing.
+                legend=alt.Legend(orient="bottom", columns=2),
             ),
             tooltip=[
                 alt.Tooltip("label:N", title="forecaster"),
@@ -208,9 +228,11 @@ def race_tab() -> None:
         return
 
     races["label"] = (
-        races["year"].astype(str) + " " + races["circuit_short_name"] + " — " + races["model"]
+        races["year"].astype(str) + " " + races["circuit_short_name"] + " (" + races["model"] + ")"
     )
-    pick = st.selectbox("race", races["label"].tolist())
+    featured = races.index[races["session_key"] == FEATURED_SESSION_KEY]
+    start = races.index.get_loc(featured[0]) if len(featured) else 0
+    pick = st.selectbox("race", races["label"].tolist(), index=start)
     row = races[races["label"] == pick].iloc[0]
     session_key, model = int(row["session_key"]), str(row["model"])
 
@@ -235,14 +257,10 @@ def race_tab() -> None:
     slot = st.empty()
     if play:
         for lap in range(1, total_laps + 1):
-            slot.altair_chart(
-                win_prob_chart(df, drivers, lap, total_laps, sc), use_container_width=True
-            )
+            slot.altair_chart(win_prob_chart(df, drivers, lap, total_laps, sc), width="stretch")
             time.sleep(speed)
     else:
-        slot.altair_chart(
-            win_prob_chart(df, drivers, upto, total_laps, sc), use_container_width=True
-        )
+        slot.altair_chart(win_prob_chart(df, drivers, upto, total_laps, sc), width="stretch")
     st.caption(
         "Solid: model. Dashed: de-vigged market, from a strictly backward as-of join; a gap "
         "means no fill within the staleness tolerance. Grey bands: SC / VSC / red flag. "
@@ -256,7 +274,7 @@ def race_tab() -> None:
             columns={"p": f"{model} p", "p_market": "market p"}
         ),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
 
@@ -267,11 +285,11 @@ def calibration_tab() -> None:
     table = query("SELECT * FROM eval_calibration")
     left, right = st.columns(2)
     left.markdown("**Full range**")
-    left.altair_chart(calibration_chart(table, 1.0), use_container_width=True)
+    left.altair_chart(calibration_chart(table, 1.0), width="stretch")
     right.markdown(f"**Low-probability region (below {ZOOM_MAX})**")
-    right.altair_chart(calibration_chart(table, ZOOM_MAX), use_container_width=True)
+    right.altair_chart(calibration_chart(table, ZOOM_MAX), width="stretch")
     st.caption(
-        "Ten equal-count bins per forecaster, 2025–26 held-out rows only. "
+        "Ten equal-count bins per forecaster, 2025-26 held-out rows only. "
         "Above the diagonal means drivers win more often than predicted."
     )
     ece = expected_calibration_error(table).rename("expected calibration error").reset_index()
@@ -310,7 +328,7 @@ def breakdown_tab() -> None:
             ]
         ].rename(columns={"grp": "group", "n": "rows"}),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             c: st.column_config.NumberColumn(format="%.4f")
             for c in ("brier_model", "brier_market", "brier_diff", "ci_lo", "ci_hi")
@@ -324,7 +342,7 @@ def breakdown_tab() -> None:
 
 def coverage_tab() -> None:
     if has_table("eval_retention"):
-        st.markdown("**Retention per season** — what fraction of model rows the market could score")
+        st.markdown("**Retention per season**: what fraction of model rows the market could score")
         st.dataframe(query("SELECT * FROM eval_retention"), hide_index=True)
     per_race = query(
         """
@@ -343,12 +361,12 @@ def coverage_tab() -> None:
         """
     )
     st.markdown(
-        f"**Per race** — {len(per_race)} races have at least one priced row. Sorted thinnest first."
+        f"**Per race**: {len(per_race)} races have at least one priced row. Sorted thinnest first."
     )
     st.dataframe(
         per_race,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={"priced_share": st.column_config.ProgressColumn(min_value=0, max_value=1)},
     )
     st.caption(
@@ -361,6 +379,8 @@ def main() -> None:
     st.set_page_config(page_title="Fair Lap", layout="wide")
     st.title("Fair Lap")
     st.caption("Lap-by-lap F1 win probability vs. Polymarket in-race odds")
+    if DB_PATH == DASHBOARD_DB_PATH:
+        st.sidebar.caption(f"Reading the committed snapshot, {DB_PATH.name}.")
     if st.sidebar.button("reload from DuckDB"):
         query.clear()
     tabs = st.tabs(["race replay", "calibration", "where each side wins", "coverage"])

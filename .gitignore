@@ -21,3 +21,9 @@ build/
 # The Results section quotes these and embeds the plot, so they are tracked too.
 !data/eval_*.csv
 !data/eval_calibration.png
+
+# The README's lead chart, from `make race-chart`.
+!data/race_9947.png
+
+# The hosted dashboard reads this, from `make dashboard-db`.
+!data/dashboard.duckdb
