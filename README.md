@@ -7,17 +7,17 @@ against Polymarket's in-race betting odds to see which one is better calibrated.
 
 **[Live dashboard](https://fair-lap.streamlit.app/)**: replay any 2025-26 race lap by lap, model vs market.
 
-![Model vs market win probability over the 2025 British GP](data/race_9947.png)
+![Model vs market win probability over the 2025 British GP, replayed lap by lap](data/race_9947.gif)
 
-*2025 British GP. Solid lines are the model, dashed lines are the de-vigged
-Polymarket price. Race control flags a safety car incident involving Piastri on
-lap 22 and the stewards give him a 10 second penalty on lap 25. The market
-starts moving to Norris as soon as the incident is flagged and has him as the
-favourite by lap 26. The model only sees positions, gaps, tyres and flags, so it
-keeps Piastri at 0.99 until he serves the penalty at his stop on lap 44. I
-picked this race because it shows the mid-race problem clearly. It's one of the
-model's worse races, and over the full set the GBM actually beats the market in
-15 of 36 races.*
+*2025 British GP, replayed lap by lap ([static version](data/race_9947.png)).
+Solid lines are the model, dashed lines are the de-vigged Polymarket price. Race
+control flags a safety car incident involving Piastri on lap 22 and the stewards
+give him a 10 second penalty on lap 25. The market starts moving to Norris as
+soon as the incident is flagged and has him as the favourite by lap 26. The
+model only sees positions, gaps, tyres and flags, so it keeps Piastri at 0.99
+until he serves the penalty at his stop on lap 44. I picked this race because it
+shows the mid-race problem clearly. It's one of the model's worse races, and
+over the full set the GBM actually beats the market in 15 of 36 races.*
 
 ## Result
 
@@ -356,7 +356,7 @@ what Streamlit Community Cloud installs, and it's only the four packages the
 dashboard imports, not the modelling stack.
 
 `make race-chart SESSION_KEY=...` draws the chart at the top of this page for
-any 2025-26 race.
+any 2025-26 race, as a PNG and as the lap-by-lap GIF.
 
 ## Quickstart
 

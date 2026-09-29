@@ -6,6 +6,8 @@ numbers: tests/test_replay.py checks a replay reproduces the holdout rows
 exactly.
 
     uv run python -m fairlap.eval.race_chart --session-key 9947 --out data/race_9947.png
+
+An --out ending in .gif writes the same chart animated lap by lap instead.
 """
 
 from __future__ import annotations
@@ -59,38 +61,33 @@ def load_penalties(session_key: int) -> pd.DataFrame:
         con.close()
 
 
-def plot_race(df: pd.DataFrame, penalties: pd.DataFrame, n_drivers: int = 3, out_path=None):
-    import matplotlib.pyplot as plt
+def pick_drivers(df: pd.DataFrame, n_drivers: int = 3) -> list[str]:
+    # Drivers either side rated highly at some point, same rule as the
+    # dashboard. Picking by the final result would be hindsight.
+    peak = df.groupby("driver")[["p", "p_market"]].max().max(axis=1)
+    return peak.sort_values(ascending=False).head(n_drivers).index.tolist()
+
+
+def draw(ax, df: pd.DataFrame, penalties: pd.DataFrame, drivers: list[str], upto: int) -> None:
+    """Draw the race on `ax` as it looked at the end of lap `upto`."""
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
 
     laps = np.arange(1, int(df["lap_number"].max()) + 1)
-    # Drivers either side rated highly at some point, same rule as the
-    # dashboard. Picking by the final result would be hindsight.
-    peak = df.groupby("driver")[["p", "p_market"]].max().max(axis=1)
-    drivers = peak.sort_values(ascending=False).head(n_drivers).index.tolist()
-
-    fig, ax = plt.subplots(figsize=(11, 5.2))
     flags = df.groupby("lap_number")[["sc_active", "vsc_active", "red_flag_active"]].any()
-    for lap, row in flags.iterrows():
+    for lap, row in flags.loc[:upto].iterrows():
         if row.any():
             shade = "0.72" if row["sc_active"] or row["red_flag_active"] else "0.86"
             ax.axvspan(lap - 0.5, lap + 0.5, color=shade, alpha=0.5, linewidth=0, zorder=0)
 
     for driver, color in zip(drivers, SERIES, strict=False):
         d = df[df["driver"] == driver].set_index("lap_number").reindex(laps)
-        ax.plot(laps, d["p"], color=color, linewidth=2.2, label=f"{driver} model")
+        d.loc[d.index > upto, ["p", "p_market"]] = np.nan
+        ax.plot(laps, d["p"], color=color, linewidth=2.2)
         # Reindexing leaves NaN where the market had no fresh fill, and
         # matplotlib breaks the line there instead of drawing a price nobody traded.
-        ax.plot(
-            laps,
-            d["p_market"],
-            color=color,
-            linewidth=1.8,
-            linestyle=(0, (5, 3)),
-            label=f"{driver} market",
-        )
-        stops = d.index[d["stops_made"].diff() > 0]
+        ax.plot(laps, d["p_market"], color=color, linewidth=1.8, linestyle=(0, (5, 3)))
+        stops = d.index[(d["stops_made"].diff() > 0) & (d.index <= upto)]
         ax.scatter(
             stops,
             d.loc[stops, "p"],
@@ -104,9 +101,9 @@ def plot_race(df: pd.DataFrame, penalties: pd.DataFrame, n_drivers: int = 3, out
 
     for _, pen in penalties.iterrows():
         m = re.search(r"CAR \d+ \((\w+)\)", pen["message"])
-        if m is None or m.group(1) not in drivers:
-            continue
         lap = int(pen["lap_number"])
+        if m is None or m.group(1) not in drivers or lap > upto:
+            continue
         ax.axvline(lap, color="0.2", linewidth=1, linestyle=":", zorder=1)
         ax.annotate(
             f"{m.group(1)} gets a 10s penalty",
@@ -141,10 +138,43 @@ def plot_race(df: pd.DataFrame, penalties: pd.DataFrame, n_drivers: int = 3, out
         Patch(color="0.86", alpha=0.5, label="VSC"),
     ]
     ax.legend(handles=handles, fontsize=8.5, loc="upper left", ncol=2, frameon=False)
+
+
+def plot_race(df: pd.DataFrame, penalties: pd.DataFrame, n_drivers: int = 3, out_path=None):
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(11, 5.2))
+    draw(ax, df, penalties, pick_drivers(df, n_drivers), int(df["lap_number"].max()))
     fig.tight_layout()
     if out_path is not None:
         fig.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
     return fig
+
+
+def animate_race(
+    df: pd.DataFrame, penalties: pd.DataFrame, out_path, fps: int = 8, hold_s: float = 3.0
+):
+    """The same chart built up one lap per frame, then held on the last lap."""
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation, PillowWriter
+
+    drivers = pick_drivers(df)
+    total = int(df["lap_number"].max())
+    frames = list(range(1, total + 1)) + [total] * int(hold_s * fps)
+
+    fig, ax = plt.subplots(figsize=(11, 5.2), facecolor="white")
+
+    def frame(upto: int) -> None:
+        ax.clear()
+        draw(ax, df, penalties, drivers, upto)
+        ax.set_title(f"lap {upto}/{total}", loc="right", color="0.3")
+
+    # Lay out on the finished chart. On an empty first frame tight_layout
+    # leaves no room for the title and axis labels, and every frame is clipped.
+    frame(total)
+    fig.tight_layout()
+    FuncAnimation(fig, frame, frames=frames).save(out_path, writer=PillowWriter(fps=fps), dpi=80)
+    plt.close(fig)
 
 
 def main() -> None:
@@ -156,7 +186,11 @@ def main() -> None:
     df = load_race(args.session_key, args.model)
     if df.empty:
         raise SystemExit(f"no held-out predictions for session {args.session_key}")
-    plot_race(df, load_penalties(args.session_key), out_path=args.out)
+    penalties = load_penalties(args.session_key)
+    if str(args.out).endswith(".gif"):
+        animate_race(df, penalties, args.out)
+    else:
+        plot_race(df, penalties, out_path=args.out)
     print(f"wrote {args.out}")
 
 
