@@ -30,6 +30,7 @@ eval: predict-test
 CHART_KEY = $(or $(SESSION_KEY),9947)
 race-chart:
 	uv run python -m fairlap.eval.race_chart --session-key $(CHART_KEY) --out data/race_$(CHART_KEY).png
+	uv run python -m fairlap.eval.race_chart --session-key $(CHART_KEY) --out data/race_$(CHART_KEY).gif
 
 # Replays every held-out race, then writes the small DB the hosted dashboard uses.
 dashboard-db:
