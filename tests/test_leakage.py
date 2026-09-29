@@ -117,14 +117,14 @@ def test_stream_matches_full_build(synthetic_race, monkeypatch):
 
 
 def test_the_replay_never_sees_the_target(synthetic_race):
-    """`won` is the only column allowed to know the outcome, so the replay lacks it."""
+    """Rule 2: `won` is the only column allowed to know the outcome, so the replay lacks it."""
     rebuilt = build_race(synthetic_race, PRIOR, GLOBAL_PRIOR, with_target=False)
     assert "won" not in rebuilt.columns
     assert "won" in build_race(synthetic_race, PRIOR, GLOBAL_PRIOR).columns
 
 
 def test_expected_remaining_stops_ignores_actual_future_stops(synthetic_race):
-    """Rule 3: deleting the stops a driver went on to make changes nothing at lap t.
+    """Rule 2: deleting the stops a driver went on to make changes nothing at lap t.
 
     Driver 1 starts a second stint on lap 3. At lap 2 the feature must not know
     that, and removing the stint entirely must leave lap 2 untouched.
