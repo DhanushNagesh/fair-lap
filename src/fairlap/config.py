@@ -14,6 +14,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("FAIRLAP_DATA_DIR", REPO_ROOT / "data"))
 RAW_CACHE_DIR = DATA_DIR / "raw"
 DUCKDB_PATH = Path(os.environ.get("FAIRLAP_DUCKDB", DATA_DIR / "duckdb" / "fairlap.duckdb"))
+# Small committed copy of what the dashboard reads, from `make dashboard-db`.
+# The dashboard falls back to it when the full database isn't there.
+DASHBOARD_DB_PATH = DATA_DIR / "dashboard.duckdb"
+# The race the README chart shows. The dashboard opens on it so a visitor
+# lands on the same example.
+FEATURED_SESSION_KEY = 9947
 
 SEASONS = (2023, 2024, 2025, 2026)
 

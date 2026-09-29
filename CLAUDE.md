@@ -44,6 +44,9 @@ whole dataset is ~24 races × ~60 laps × ~20 drivers a season.
 - `src/fairlap/model/` — `baseline.py`, `gbm.py`, `simulate.py`
 - `src/fairlap/eval/` — `metrics.py`, `calibration.py`, `compare_market.py`
 - `dashboard/app.py` — Streamlit, read-only against DuckDB
+- `src/fairlap/dashboard_db.py` — builds the committed `data/dashboard.duckdb`
+  snapshot the hosted dashboard reads; the dashboard falls back to it when the
+  full DB is absent
 - `tests/` — pytest; `test_leakage.py` is the important one
 - `data/` — gitignored: DuckDB file plus the raw response cache
 
@@ -62,6 +65,7 @@ carry the rules specific to those stages. Read them before editing there.
     make features
     make eval
     make replay SESSION_KEY=9999
+    make dashboard-db                        # replays held-out races, rebuilds the snapshot
     make dashboard
 
 `make ingest` must rebuild the DuckDB file with no manual steps and no

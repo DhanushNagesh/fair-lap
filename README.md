@@ -311,6 +311,20 @@ reads `replay_predictions` and the `eval_*` tables, so the charts match the
 numbers above. Four tabs: model vs market over laps with SC/VSC/red flag laps
 shaded, calibration curves, the breakdown table with CIs, and per-race coverage.
 
+The full database is about 50MB and gitignored, so the repo also commits
+`data/dashboard.duckdb` (4.2MB), a copy of just the tables and columns the
+dashboard reads. `make dashboard-db` rebuilds it: it replays all 38 held-out
+races that have a market (about 2 minutes) and then copies the eval tables, the
+replays, sessions, drivers, and a trimmed slice of the feature table. The
+dashboard uses the full database if it exists and the snapshot if it doesn't,
+so a fresh clone can run `make install && make dashboard` without running
+the ingest. The replayed rows match the scored holdout predictions on all
+42,523 rows, max difference 0.0.
+
+The hosted version reads the same snapshot. `dashboard/requirements.txt` is
+what Streamlit Community Cloud installs, and it's only the four packages the
+dashboard imports, not the modelling stack.
+
 `make race-chart SESSION_KEY=...` draws the chart at the top of this page for
 any 2025-26 race.
 
@@ -325,5 +339,9 @@ make predict
 make eval
 make replay SESSION_KEY=9693
 make race-chart SESSION_KEY=9947
+make dashboard-db
 make dashboard
 ```
+
+To just look at the dashboard on a fresh clone, `make install` and
+`make dashboard` are enough.

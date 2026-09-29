@@ -24,3 +24,6 @@ build/
 
 # The README's lead chart, from `make race-chart`.
 !data/race_9947.png
+
+# The hosted dashboard reads this, from `make dashboard-db`.
+!data/dashboard.duckdb
